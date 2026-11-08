@@ -1,0 +1,18 @@
+{
+  "grpc-listen": ":8443",
+  "web-listen": "127.0.0.1:8080",
+  "db-driver": "postgres",
+  "db": "postgres://monitor:CHANGE_ME@127.0.0.1:5432/monitor?sslmode=disable",
+  "tls-enabled": true,
+  "tls-cert": "config/server.crt",
+  "tls-key": "config/server.key",
+  "tls-ca": "config/ca.crt",
+  "auth-token": "",
+  "web-tls-enabled": false,
+  "web-cert": "",
+  "web-key": "",
+  "web-user": "monitor",
+  "web-password": "",
+  "offline-after": "15s",
+  "retention": "168h"
+}

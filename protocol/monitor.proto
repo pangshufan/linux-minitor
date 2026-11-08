@@ -1,0 +1,59 @@
+syntax = "proto3";
+
+package monitor.v1;
+option go_package = "monitor/protocol;protocol";
+
+service Monitor {
+  rpc Connect(stream AgentMessage) returns (stream ServerMessage);
+}
+
+message AgentMessage {
+  oneof body {
+    Hello hello = 1;
+    Heartbeat heartbeat = 2;
+    Snapshot snapshot = 3;
+    QueryResult query_result = 4;
+  }
+}
+
+message ServerMessage {
+  oneof body {
+    Ack ack = 1;
+    Query query = 2;
+  }
+}
+
+message Hello {
+  string host_id = 1;
+  string run_id = 2;
+  int64 report_interval_ms = 3;
+}
+
+message Heartbeat {
+  uint64 latest_sample_id = 1;
+}
+
+message Ack {}
+
+message Snapshot {
+  // Versioned collector JSON preserves the existing inventory and metric schema.
+  bytes metrics_json = 1;
+  bytes filesystems_json = 2;
+  bytes inventory_json = 3;
+}
+
+message Query {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    KIND_LATEST = 1;
+    KIND_INVENTORY = 2;
+  }
+  string request_id = 1;
+  Kind kind = 2;
+}
+
+message QueryResult {
+  string request_id = 1;
+  Snapshot snapshot = 2;
+  string error = 3;
+}

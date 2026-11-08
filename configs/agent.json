@@ -1,0 +1,21 @@
+{
+  "server": "10.181.21.20:8443",
+  "host-id": "linux-node",
+  "tls-enabled": true,
+  "tls-cert": "config/agent.crt",
+  "tls-key": "config/agent.key",
+  "tls-ca": "config/ca.crt",
+  "auth-token": "",
+  "sample-interval": "1s",
+  "windows": "30s",
+  "inventory-interval": "5m",
+  "filesystem-interval": "15s",
+  "push-interval": "30s",
+  "heartbeat-interval": "5s",
+  "process-enabled": true,
+  "process-limit": 256,
+  "process-services": [],
+  "process-discovery-interval": "5s",
+  "process-pss-enabled": false,
+  "process-pss-interval": "30s"
+}

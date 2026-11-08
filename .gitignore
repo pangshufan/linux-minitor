@@ -1,0 +1,7 @@
+.vscode/
+build/
+dist/
+java/target/
+.DS_Store
+*.log
+.idea/

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>服务器监控</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="top"><a href="#" class="brand"><span aria-hidden="true">▥</span> 服务器监控</a><span class="muted">运维控制台</span></header>
+  <main>
+    <section id="fleet">
+      <div class="heading"><div><h1>服务器列表</h1><p id="fleet-summary" class="muted"></p></div>
+        <label>状态 <select id="filter"><option value="all">全部</option><option value="online">在线</option><option value="offline">失联</option></select></label>
+      </div>
+      <div class="panel scroll"><table><thead><tr><th>服务器</th><th>状态</th><th>CPU</th><th>内存</th><th>根分区</th><th>系统启动</th><th>最后联系</th></tr></thead><tbody id="fleet-rows"></tbody></table></div>
+    </section>
+    <section id="detail" hidden>
+      <a href="#" class="back">← 服务器列表</a>
+      <div class="heading"><div><h1 id="host-title"></h1><p id="host-subtitle" class="muted"></p></div>
+        <div class="actions"><button id="live-inventory" type="button">查询配置</button><button id="live-metrics" type="button" class="primary">查询最新指标</button></div>
+      </div>
+      <p id="live-message" class="muted" role="status"></p>
+      <div id="cards" class="cards"></div>
+      <section class="panel"><h2>系统与硬件</h2><dl id="system" class="facts"></dl></section>
+      <section class="panel">
+        <div class="heading"><div><h2>资源趋势</h2><p id="history-note" class="muted"></p></div>
+          <div class="actions"><label>指标 <select id="series"></select></label><label>范围 <select id="range"><option value="1h">最近 1 小时</option><option value="6h">最近 6 小时</option><option value="24h">最近 24 小时</option></select></label></div>
+        </div>
+        <div id="chart"></div>
+      </section>
+      <section class="panel"><h2>最新磁盘和网卡速率</h2><div id="rates" class="scroll"></div></section>
+      <section class="panel"><h2>服务与进程</h2><p id="process-note" class="muted"></p><div id="processes" class="scroll"></div></section>
+      <section class="panel"><h2>挂载容量</h2><div id="mounts" class="scroll"></div></section>
+      <section class="panel"><h2>磁盘、分区与映射</h2><div id="disks" class="scroll"></div></section>
+      <section class="panel"><h2>LVM 卷组与逻辑卷</h2><div id="lvm" class="scroll"></div></section>
+      <section class="panel"><h2>DIMM 与网卡配置</h2><div id="hardware" class="scroll"></div></section>
+    </section>
+    <p id="error" role="alert"></p>
+  </main>
+</body>
+</html>

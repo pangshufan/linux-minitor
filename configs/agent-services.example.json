@@ -1,0 +1,47 @@
+{
+  "server": "10.181.21.20:8443",
+  "host-id": "linux-node",
+  "tls-enabled": true,
+  "tls-cert": "config/agent.crt",
+  "tls-key": "config/agent.key",
+  "tls-ca": "config/ca.crt",
+  "auth-token": "",
+  "sample-interval": "1s",
+  "windows": "30s",
+  "inventory-interval": "5m",
+  "filesystem-interval": "15s",
+  "push-interval": "30s",
+  "heartbeat-interval": "5s",
+  "process-enabled": true,
+  "process-limit": 256,
+  "process-services": [
+    {
+      "name": "Redis",
+      "match": {
+        "systemd_unit": "redis-server.service"
+      },
+      "include_children": true
+    },
+    {
+      "name": "订单服务",
+      "match": {
+        "executable": "/usr/bin/java",
+        "args_contains": [
+          "-jar",
+          "/opt/orders/orders.jar"
+        ]
+      },
+      "include_children": true
+    },
+    {
+      "name": "批处理服务",
+      "match": {
+        "cgroup": "/system.slice/batch.service"
+      },
+      "include_children": true
+    }
+  ],
+  "process-discovery-interval": "5s",
+  "process-pss-enabled": false,
+  "process-pss-interval": "30s"
+}

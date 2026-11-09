@@ -343,9 +343,15 @@ async function refresh(revision) {
       renderDetail();
       const range = el('range').value;
       if (range !== historyRange || Date.now() - historyFetched >= 30000) {
-        const history = await api(endpoint + '/history?range=' + range);
+        const cursor = range === historyRange ? points.at(-1)?.received_ms : undefined;
+        const params = new URLSearchParams({range});
+        if (cursor !== undefined) params.set('since_ms', cursor);
+        const history = await api(endpoint + '/history?' + params);
         if (revision !== epoch) return;
-        points = history;
+        // Include the cursor timestamp again so samples tied at the boundary are replaced together.
+        const cutoff = Date.now() - Number(range.slice(0, -1)) * 3600000;
+        const previous = cursor === undefined ? [] : points.filter(p => p.received_ms < cursor);
+        points = previous.concat(history).filter(p => p.received_ms >= cutoff).slice(-3000);
         historyFetched = Date.now();
         historyRange = range;
         renderChart();

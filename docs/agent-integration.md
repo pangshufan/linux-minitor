@@ -290,7 +290,7 @@ Web/API 加密由 web-tls-enabled/web-cert/web-key 配置，独立于 gRPC。除
 | GET /healthz | 进程 HTTP 健康状态，不能代替数据库/Agent 健康检查 |
 | GET /api/hosts | 主机摘要数组，含 host_id/hostname/online/collection_status/booted_at/资源利用率 |
 | GET /api/hosts/{host_id} | 主机详情，含 metrics/filesystems/inventory 最新保存对象及其接收/采集时间 |
-| GET /api/hosts/{host_id}/history?range=1h | 最多 3000 个历史点，按接收时间升序；range 为大于 0 且不超过 168h 的 Go 时长 |
+| GET /api/hosts/{host_id}/history?range=1h | 最多 3000 个历史点，按接收时间升序；range 为大于 0 且不超过 168h 的 Go 时长。可选 since_ms 为包含边界的接收时间（Unix 毫秒），与 range 共同限制查询范围 |
 | POST /api/hosts/{host_id}/query/latest | 通过现有流获取 Agent 最新缓存，返回 metrics/filesystems |
 | POST /api/hosts/{host_id}/query/inventory | 获取 Agent 清单缓存，返回 inventory |
 

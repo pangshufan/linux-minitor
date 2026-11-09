@@ -26,6 +26,8 @@ protoc -I . --go_out=. --go_opt=paths=source_relative \
   --go-grpc_out=. --go-grpc_opt=paths=source_relative protocol/monitor.proto
 ```
 
+完整的证书签发命令、JSON 参数和 systemd 安装步骤见 [安装与配置手册](docs/install.md)。
+
 ## 证书与运行
 
 Server 的 gRPC 证书需要 `serverAuth` 用途，且 SAN 匹配 Agent 连接使用的域名或 IP。每台 Agent 单独签发 `clientAuth` 证书，包含且只包含一个 `urn:monitor:host:<host-id>` 身份 URI。Server 用受信 CA 校验证书，并比对该 URI 与 Agent 声明的主机 ID。以 `uos-01` 为例，证书 SAN 包含 `URI:urn:monitor:host:uos-01`，Agent 参数为 `-host-id uos-01`。以下用同一个 CA 演示，双方也可分别使用各自信任的 CA。

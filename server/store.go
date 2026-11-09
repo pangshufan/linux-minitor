@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS samples (
   inventory_version TEXT NOT NULL, metrics BLOB NOT NULL, filesystems BLOB,
   PRIMARY KEY(host_id, run_id, sample_id)
 );
-CREATE INDEX IF NOT EXISTS samples_by_host_time ON samples(host_id, received_ms);
+CREATE INDEX IF NOT EXISTS samples_by_host_order ON samples(host_id, received_ms DESC, collected_at DESC, run_id DESC, sample_id DESC);
 CREATE INDEX IF NOT EXISTS samples_by_time ON samples(received_ms);
 `
 

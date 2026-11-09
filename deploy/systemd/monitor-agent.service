@@ -1,0 +1,19 @@
+[Unit]
+Description=Monitor Agent
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/monitor
+EnvironmentFile=-/etc/monitor/agent.env
+ExecStart=/opt/monitor/bin/monitor-agent -config /etc/monitor/agent.json
+Restart=on-failure
+RestartSec=3s
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

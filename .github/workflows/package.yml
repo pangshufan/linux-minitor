@@ -1,0 +1,64 @@
+name: Build packages
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { component: agent, os: linux, arch: amd64 }
+          - { component: agent, os: linux, arch: arm64 }
+          - { component: server, os: linux, arch: amd64 }
+          - { component: server, os: linux, arch: arm64 }
+          - { component: server, os: windows, arch: amd64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Test
+        if: matrix.component == 'server' && matrix.os == 'linux' && matrix.arch == 'amd64'
+        run: go test -mod=readonly ./...
+      - name: Build and archive
+        env:
+          COMPONENT: ${{ matrix.component }}
+          TARGET_OS: ${{ matrix.os }}
+          TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          name="monitor-$COMPONENT-$TARGET_OS-$TARGET_ARCH"
+          package="dist/$name"
+          mkdir -p "$package/bin" "$package/configs" "$package/docs"
+          executable="monitor-$COMPONENT"
+          if [[ "$TARGET_OS" == windows ]]; then executable+=".exe"; fi
+          CGO_ENABLED=0 GOOS="$TARGET_OS" GOARCH="$TARGET_ARCH" \
+            go build -mod=readonly -trimpath -o "$package/bin/$executable" "./$COMPONENT"
+          cp docs/install.md "$package/docs/"
+          if [[ "$COMPONENT" == agent ]]; then
+            cp configs/agent*.json "$package/configs/"
+          else
+            cp configs/server*.json "$package/configs/"
+            cp deploy/postgres-history-index.sql "$package/"
+          fi
+          if [[ "$TARGET_OS" == linux ]]; then
+            cp "deploy/systemd/monitor-$COMPONENT.service" "$package/"
+            tar -czf "$package.tar.gz" -C dist "$name"
+          else
+            (cd dist && zip -qr "$name.zip" "$name")
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: monitor-${{ matrix.component }}-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error

@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -117,5 +119,42 @@ func testStoreRoundTrip(t *testing.T, db *store) {
 	hosts, err := db.hosts(ctx, "node")
 	if err != nil || len(hosts) != 1 || len(hosts[0].Metrics) == 0 || len(hosts[0].Filesystems) == 0 {
 		t.Fatalf("latest sample should survive history expiry: %v, %v", hosts, err)
+	}
+}
+
+func TestHistoryCursorIncludesAllSamplesAtBoundary(t *testing.T) {
+	store, err := openStore(filepath.Join(t.TempDir(), "monitor.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.db.Close()
+	ctx := context.Background()
+	boundary := time.Now().Add(-time.Minute).Truncate(time.Millisecond)
+	if err := store.hello(ctx, &protocol.Hello{HostId: "node", ReportIntervalMs: 1000}, boundary); err != nil {
+		t.Fatal(err)
+	}
+	for i, at := range []time.Time{boundary.Add(-time.Second), boundary, boundary} {
+		payload, err := json.Marshal(metricHeader{SampleID: int64(i + 1), CollectedAt: at})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.save(ctx, "node", "run", &protocol.Snapshot{MetricsJson: payload}, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	request := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/hosts/node/history?range=1h&since_ms=%d", boundary.UnixMilli()), nil)
+	request.SetPathValue("id", "node")
+	response := httptest.NewRecorder()
+	(&hub{store: store}).hostHistory(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("history status %d: %s", response.Code, response.Body.String())
+	}
+	var points []historyPoint
+	if err := json.Unmarshal(response.Body.Bytes(), &points); err != nil {
+		t.Fatal(err)
+	}
+	if len(points) != 2 || points[0].ReceivedMS != boundary.UnixMilli() || points[1].ReceivedMS != boundary.UnixMilli() {
+		t.Fatalf("expected both boundary samples, got %+v", points)
 	}
 }

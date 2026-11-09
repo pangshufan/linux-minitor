@@ -1,0 +1,22 @@
+[Unit]
+Description=Monitor Server
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=monitor-server
+Group=monitor-server
+WorkingDirectory=/opt/monitor
+EnvironmentFile=/etc/monitor/server.env
+ExecStart=/opt/monitor/bin/monitor-server -config /etc/monitor/server.json
+Restart=on-failure
+RestartSec=3s
+UMask=0027
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+StateDirectory=monitor
+
+[Install]
+WantedBy=multi-user.target

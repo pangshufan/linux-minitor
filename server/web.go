@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"strconv"
 	"time"
 
 	"monitor/internal/transport"
@@ -148,7 +149,18 @@ func (h *hub) hostHistory(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	points, err := h.store.history(r.Context(), r.PathValue("id"), time.Now().Add(-duration))
+	since := time.Now().Add(-duration)
+	if value := r.URL.Query().Get("since_ms"); value != "" {
+		ms, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || ms < 0 {
+			writeError(w, http.StatusBadRequest, "since_ms must be a nonnegative Unix timestamp in milliseconds")
+			return
+		}
+		if cursor := time.UnixMilli(ms); cursor.After(since) {
+			since = cursor
+		}
+	}
+	points, err := h.store.history(r.Context(), r.PathValue("id"), since)
 	if err != nil {
 		storageError(w, err)
 		return

@@ -156,7 +156,7 @@ VM 当前采集 pgmajfault、pswpin、pswpout；pgmajfault 为 events/s，pswpin
 
 ## 6. 命名服务与进程 JSON
 
-Agent 只采集配置中的服务。`process-services` 是包含 name、match、include_children 的数组；选择 systemd_unit、cgroup 或 executable + args_contains，详见 README 和 configs/agent-services.example.json。未配置目标时 processes.services/items 均为空，不再默认监控所有系统进程。配置变更需重启 Agent。
+Agent 只采集配置中的服务。`process-services` 是包含 name、match 或 match_any、include_children 的数组；match 选择 systemd_unit、cgroup 或 executable + args_contains，match_any 用于归并多个 executable + args_contains 匹配规则，详见 README 和 configs/agent-services.example.json。未配置目标时 processes.services/items 均为空，不再默认监控所有系统进程。配置变更需重启 Agent。
 
 `metrics_json.processes` 示例（节选）：
 
@@ -258,7 +258,7 @@ observed_starts/exits 反映服务成员进入或离开，不保证代表系统�
 
 process-limit 对所有目标服务的不同进程明细设置总上限，优先按 CPU 增量、RSS、PID 排序；超限不改变服务归属，只让服务明细不完整。cgroup 原生资源计数与明细截取独立，仍可有效。processes.matched/reported/truncated 是全局目标进程数量，matches 是按服务名称的成员数；各服务可能重叠。
 
-没有配置服务、服务已停止、缺少权限或接口、被截取是不同状态。读取失败会以 issues/缺失字段反映，不使用零模拟。系统仍以 Linux >= 4.18 为基线；pidfd_open 在 Linux >= 5.3 且实际可用时启用，否则退回 procfs。PSS 等接口同样依赖内核编译选项与权限。
+没有配置服务、服务已停止、缺少权限或接口、被截取是不同状态。读取失败会以 issues/缺失字段反映，不使用零模拟。系统仍以 Linux >= 4.18 为基线；pidfd_open 根据运行时探测启用，否则退回 procfs。上游 Linux 5.3 引入该接口，发行版可能回移到较早内核。PSS 等接口同样依赖内核编译选项与权限。
 
 ## 7. 配置清单与文件系统
 

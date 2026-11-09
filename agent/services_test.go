@@ -185,3 +185,21 @@ func TestAsyncUnitLookupDoesNotBlockSampling(t *testing.T) {
 		t.Fatal("async unit result not applied")
 	}
 }
+
+func TestServiceMatchAnyGroupsMultipleExecutables(t *testing.T) {
+	root := t.TempDir()
+	fixtureProcess(t, root, 42, 1, 300, 100, "/jdk-a/bin/java", "first.jar")
+	fixtureProcess(t, root, 43, 1, 301, 50, "/jdk-b/bin/java", "second.jar")
+	fixtureProcess(t, root, 44, 1, 302, 10, "/jdk-b/bin/java", "other.jar")
+	configs, err := parseServiceConfig(`[{"name":"app","match_any":[{"executable":"/jdk-a/bin/java","args_contains":["first.jar"]},{"executable":"/jdk-b/bin/java","args_contains":["second.jar"]}]}]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	collector := &processCollector{root: root, clock: 100}
+	defer collector.close()
+	snapshot, _ := collectFixture(collector, config{processes: true, processLimit: 10, services: configs}, time.Now())
+	service := snapshot.Processes.Services[0]
+	if service.State != "running" || service.ProcessCount != 2 || service.RootCount != 2 {
+		t.Fatalf("unexpected service membership: %+v", service)
+	}
+}

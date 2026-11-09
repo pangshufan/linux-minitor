@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,9 +18,10 @@ import (
 )
 
 type serviceConfig struct {
-	Name            string       `json:"name"`
-	Match           serviceMatch `json:"match"`
-	IncludeChildren *bool        `json:"include_children,omitempty"`
+	Name            string         `json:"name"`
+	Match           serviceMatch   `json:"match"`
+	MatchAny        []serviceMatch `json:"match_any,omitempty"`
+	IncludeChildren *bool          `json:"include_children,omitempty"`
 }
 type serviceMatch struct {
 	SystemdUnit  string   `json:"systemd_unit,omitempty"`
@@ -59,6 +61,20 @@ func parseServiceConfig(text string) ([]serviceConfig, error) {
 		}
 		names[s.Name] = true
 		m := s.Match
+		if s.MatchAny != nil {
+			if m.SystemdUnit != "" || m.Cgroup != "" || m.Executable != "" || len(m.ArgsContains) > 0 {
+				return nil, fmt.Errorf("service %q cannot combine match and match_any", s.Name)
+			}
+			if len(s.MatchAny) == 0 || len(s.MatchAny) > 32 {
+				return nil, fmt.Errorf("service %q needs 1–32 match_any selectors", s.Name)
+			}
+			for _, selector := range s.MatchAny {
+				if selector.SystemdUnit != "" || selector.Cgroup != "" || !filepath.IsAbs(selector.Executable) || !validServiceArgs(selector.ArgsContains) {
+					return nil, fmt.Errorf("service %q match_any requires absolute executable paths and valid args_contains", s.Name)
+				}
+			}
+			continue
+		}
 		n := 0
 		if m.SystemdUnit != "" {
 			n++
@@ -81,13 +97,29 @@ func parseServiceConfig(text string) ([]serviceConfig, error) {
 		if n != 1 || (m.Executable == "" && len(m.ArgsContains) > 0) {
 			return nil, fmt.Errorf("service %q needs exactly one selector: systemd_unit, cgroup or executable with optional args_contains", s.Name)
 		}
-		for _, arg := range m.ArgsContains {
-			if arg == "" || strings.ContainsRune(arg, 0) {
-				return nil, fmt.Errorf("invalid args_contains for %q", s.Name)
-			}
+		if !validServiceArgs(m.ArgsContains) {
+			return nil, fmt.Errorf("invalid args_contains for %q", s.Name)
 		}
 	}
 	return configs, nil
+}
+
+func validServiceArgs(args []string) bool {
+	for _, arg := range args {
+		if arg == "" || strings.ContainsRune(arg, 0) {
+			return false
+		}
+	}
+	return true
+}
+
+func slicesContainsAll(args, required []string) bool {
+	for _, arg := range required {
+		if !slices.Contains(args, arg) {
+			return false
+		}
+	}
+	return true
 }
 
 func configuredServices(cfg config) []serviceConfig {
@@ -186,63 +218,63 @@ func (c *processCollector) discover(cfg serviceConfig, t *serviceTracker, now ti
 		return discoveryErr
 	}
 	roots := map[int]string{}
-	executable := cfg.Match.Executable
-	if executable != "" {
-		if resolved, err := filepath.EvalSymlinks(executable); err == nil {
-			executable = resolved
+	selectors := cfg.MatchAny
+	if len(selectors) == 0 {
+		selectors = []serviceMatch{cfg.Match}
+	}
+	byExecutable := make(map[string][]serviceMatch)
+	for _, selector := range selectors {
+		executable := selector.Executable
+		if executable != "" {
+			if resolved, err := filepath.EvalSymlinks(executable); err == nil {
+				executable = resolved
+			}
 		}
+		byExecutable[executable] = append(byExecutable[executable], selector)
 	}
 	unreadable := 0
 	for pid, p := range index {
-		entryName := strconv.Itoa(pid)
-		m := cfg.Match
-		if len(m.legacyNames) > 0 && !m.legacyNames[p.Name] {
-			continue
-		}
-		if executable != "" {
-			exe, err := os.Readlink(filepath.Join(c.root, entryName, "exe"))
+		path := filepath.Join(c.root, strconv.Itoa(pid))
+		matches := byExecutable[""]
+		if len(matches) == 0 {
+			exe, err := os.Readlink(filepath.Join(path, "exe"))
 			if err != nil {
 				if !os.IsNotExist(err) {
 					unreadable++
 				}
 				continue
 			}
-			if strings.TrimSuffix(exe, " (deleted)") != executable {
-				continue
-			}
+			matches = byExecutable[strings.TrimSuffix(exe, " (deleted)")]
 		}
-		if len(m.ArgsContains) > 0 || m.legacyPattern != "" {
-			cmd, err := readProcessCommand(filepath.Join(c.root, entryName, "cmdline"))
-			if err != nil {
-				if !os.IsNotExist(err) {
-					unreadable++
-				}
+		var command []byte
+		for _, m := range matches {
+			if len(m.legacyNames) > 0 && !m.legacyNames[p.Name] {
 				continue
 			}
-			if m.legacyPattern != "" && !strings.Contains(strings.ReplaceAll(string(cmd), "\x00", " "), m.legacyPattern) {
-				continue
-			}
-			args := strings.Split(string(cmd), "\x00")
-			matched := true
-			for _, want := range m.ArgsContains {
-				found := false
-				for _, arg := range args[1:] {
-					if arg == want {
-						found = true
+			if len(m.ArgsContains) > 0 || m.legacyPattern != "" {
+				if command == nil {
+					var err error
+					command, err = readProcessCommand(filepath.Join(path, "cmdline"))
+					if err != nil {
+						if !os.IsNotExist(err) {
+							unreadable++
+						}
 						break
 					}
 				}
-				if !found {
-					matched = false
-					break
+				if m.legacyPattern != "" && !strings.Contains(strings.ReplaceAll(string(command), "\x00", " "), m.legacyPattern) {
+					continue
+				}
+				args := strings.Split(string(command), "\x00")
+				if !slicesContainsAll(args[1:], m.ArgsContains) {
+					continue
 				}
 			}
-			if !matched {
-				continue
-			}
+			roots[pid] = p.Key
+			break
 		}
-		roots[pid] = p.Key
 	}
+
 	members := map[int]string{}
 	for pid, key := range roots {
 		members[pid] = key
@@ -449,7 +481,7 @@ func (c *processCollector) collect(cfg config, s *metricSnapshot, raw *rawSample
 				svc.State = "degraded"
 			}
 		}
-		if target.Match.Executable != "" || target.Match.legacyPattern != "" || len(target.Match.legacyNames) > 0 {
+		if len(target.MatchAny) > 0 || target.Match.Executable != "" || target.Match.legacyPattern != "" || len(target.Match.legacyNames) > 0 {
 			rootAlive := false
 			for pid, expected := range t.roots {
 				if p, ok := live[pid]; ok && p.Key == expected {

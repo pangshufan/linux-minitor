@@ -161,7 +161,7 @@ MONITOR_TEST_POSTGRES_DSN='postgres://user:password@127.0.0.1:5432/testdb?sslmod
 }
 ```
 
-完整示例见 [agent-services.example.json](configs/agent-services.example.json)，其中路径、参数、unit、cgroup 均需按实际服务修改。每项名称唯一且不超过 128 字节，`match` 中恰好配置一种选择器：
+完整示例见 [agent-services.example.json](configs/agent-services.example.json)，其中路径、参数、unit、cgroup 均需按实际服务修改。每项名称唯一且不超过 128 字节。需要把多个启动方式归到同一服务时，可用 `match_any` 替代 `match`，列出 1 至 32 组 executable 和可选 args_contains，命中任一组即归入该服务。使用 `match` 时恰好配置一种选择器：
 
 - `systemd_unit`：指定 `.service` 单元。通过只读 systemctl 查询其实际 ControlGroup，异步执行以免阻塞 1s 指标采集；不假定服务位于 system.slice。单元停止时无成员，查询失败时状态未知。
 - `cgroup`：指定内核层级中的绝对路径，如 `/system.slice/orders.service`，不是 `/sys/fs/cgroup/...` 文件系统路径。根据挂载信息适配 cgroup v1/v2。禁止选择整个根 cgroup。
@@ -169,7 +169,7 @@ MONITOR_TEST_POSTGRES_DSN='postgres://user:password@127.0.0.1:5432/testdb?sslmod
 
 `include_children` 默认 true：cgroup 模式包含下级 cgroup；命令模式包含后代进程，并保留已识别后代在父进程退出、重新归属后的服务关联，直到该进程退出。false 时 cgroup 只枚举本组直接成员，命令模式只包含匹配根进程；此时资源汇总使用对应进程，不使用包含下级组的 cgroup 统计。
 
-命令模式仅在发现周期枚举 PID 和匹配元数据，详细指标仅对目标进程采集。cgroup 模式每次采样从目标组获取成员，无需枚举所有系统进程。Linux >= 5.3 且接口可用时利用 pidfd 检测退出，其他情况退回 procfs；所有模式仍用 PID + start_ticks 校验身份。命令模式中新进程可能在下一次发现时才出现，快速创建并退出的进程可能不被观察到。
+命令模式仅在发现周期枚举 PID 和匹配元数据，详细指标仅对目标进程采集。cgroup 模式每次采样从目标组获取成员，无需枚举所有系统进程。Agent 探测到 pidfd 接口可用时用它辅助检测退出，否则使用 procfs。上游 Linux 5.3 引入该接口，实测两台 UOS 4.19 测试机也提供该能力；所有模式仍用 PID + start_ticks 校验身份。命令模式中新进程可能在下一次发现时才出现，快速创建并退出的进程可能不被观察到。
 
 Web 以服务展示状态、进程数、CPU、RSS 合计、可选 PSS、cgroup 内存、线程/FD 合计及 I/O，展开显示当前进程树。同一进程在多个服务匹配时明细只保存一次，各服务引用它；不同服务合计不能直接相加。CPU/IO 计算窗口沿用 sample-interval/windows，推送周期不改变窗口定义；服务 CPU 同样以单核为 100%，可能超过 100%。
 

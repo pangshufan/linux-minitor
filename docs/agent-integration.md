@@ -290,6 +290,7 @@ Web/API 加密由 web-tls-enabled/web-cert/web-key 配置，独立于 gRPC。除
 | GET /healthz | 进程 HTTP 健康状态，不能代替数据库/Agent 健康检查 |
 | GET /api/hosts | 主机摘要数组，含 host_id/hostname/online/collection_status/booted_at/资源利用率 |
 | GET /api/hosts/{host_id} | 主机详情，含 metrics/filesystems/inventory 最新保存对象及其接收/采集时间 |
+| DELETE /api/hosts/{host_id} | 退役离线主机。携带 `Content-Type: application/json`，成功返回 204，活动连接返回 409。删除样本和配置版本，保留告警审计历史。Agent 后续重新连接时会重新注册。 |
 | GET /api/hosts/{host_id}/history?range=1h | 最多 3000 个历史点，按接收时间升序；range 为大于 0 且不超过 168h 的 Go 时长。可选 since_ms 为包含边界的接收时间（Unix 毫秒），与 range 共同限制查询范围 |
 | POST /api/hosts/{host_id}/query/latest | 通过现有流获取 Agent 最新缓存，返回 metrics/filesystems |
 | POST /api/hosts/{host_id}/query/inventory | 获取 Agent 清单缓存，返回 inventory |
@@ -308,7 +309,7 @@ curl 将交互式询问密码。HTTPS 使用可信 CA（例如 curl --cacert）�
 
 详情包含 last_seen_ms、latest_received_ms、inventory_ms、report_interval_ms 等 Unix 毫秒时间。online 来自当前活动会话与心跳；重启 Server 后保存的旧主机应为离线，直到 Agent 重连。collection_status 为 active / stalled / warming_up / unknown，在线不代表指标正在推进。
 
-历史点包含 collected_at、received_ms、window_ms、elapsed_ms、cpu_percent、memory_percent、swap_percent、rates、filesystems、inventory_version。rates 是基础计算窗口的速率，包含进程和服务分组；额外返回 services 服务汇总与 service_status，可查询服务 RSS/CPU/I/O 趋势。历史接口不返回完整 processes.items，也不返回额外计算窗口，不能据此还原每个历史进程的 RSS 或 Xmx。完整原始快照保存在数据库中，API 扩展应另行约定，不建议第三方直接依赖内部表结构。切换数据库不会改变 HTTP API。
+历史点包含 collected_at、received_ms、window_ms、elapsed_ms、cpu_percent、memory_percent、swap_percent、rates、filesystems、inventory_version。rates 默认使用基础计算窗口。可用 `window_ms=30000` 请求 30 秒窗口，窗口缺失时对应 CPU 和速率字段为空。rates 包含进程和服务分组；额外返回 services 服务汇总与 service_status，可查询服务 RSS/CPU/I/O 趋势。历史接口不返回完整 processes.items，每次查询返回一个计算窗口，不能据此还原每个历史进程的 RSS 或 Xmx。完整原始快照保存在数据库中，API 扩展应另行约定，不建议第三方直接依赖内部表结构。切换数据库不会改变 HTTP API。
 
 查询常见错误：401 未认证；404 未知主机详情；409 主机不在线；415 缺少指定 Content-Type；429 待查询队列满；502 Agent 返回错误或响应无效；504 查询超时。history 对未知主机可能返回空数组。接口不提供跨页历史导出。
 
@@ -399,3 +400,12 @@ asyncio.run(main())
 ```
 
 示例中的进程打印不是持久化确认。完整平台还需按前文实现连接超时、数据校验、在线/采集状态、队列容量和资源限制。
+
+
+## Windows Agent 字段
+
+Windows 与 Linux 共用快照协议。Windows 主机的 `inventory.system.id` 为 `windows`，`system_volume` 为系统卷挂载路径。挂载路径可为盘符根目录或本地卷的目录挂载点。`memory_available_source=GlobalMemoryStatusEx` 表示从物理内存总量和可用量计算使用量。
+
+`processes.lifecycle_source=windows_process_snapshot` 表示进程数据来自 Win32 快照。进程身份中的 `start_ticks` 使用 Windows 创建时间 FILETIME，作为不透明身份的一部分。Windows 进程的 `working_set_bytes` 为工作集字节数，采集成功时也写入兼容字段 `rss_bytes`。`handle_count` 为 Windows 句柄数。服务的 `membership_source` 为 `windows_scm` 或 `windows_executable`。共享宿主进程的 SCM 服务保留自身状态，各服务资源用量留空。
+
+SCM 只在明确返回停止时上报 `stopped`，启停过渡、查询权限不足和服务不存在使用 `unknown`。进程 CPU 仍以单核时间占比表示，整机 CPU 以全部可采集处理器组为分母。Windows 不上报 Linux 特有的 PSS、cgroup、LVM 或 PSI 字段。

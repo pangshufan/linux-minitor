@@ -267,7 +267,7 @@ func (h *hub) state(r *hostRecord, now time.Time) {
 	if !r.Online {
 		return
 	}
-	r.LastSeenMS, r.ConnectedMS = s.lastSeen.UnixMilli(), s.connected.UnixMilli()
+	r.LastSeenMS, r.ConnectedMS, r.ProgressMS = s.lastSeen.UnixMilli(), s.connected.UnixMilli(), s.lastProgress.UnixMilli()
 	switch {
 	case now.Sub(s.lastProgress) >= h.offlineAfter:
 		r.Collecting = "stalled"

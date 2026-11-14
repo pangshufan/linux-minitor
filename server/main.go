@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -30,6 +31,8 @@ func main() {
 func run() error {
 	var grpcAddr, webAddr, dbPath, cert, key, ca, webCert, webKey, webUser string
 	var offlineAfter, retention time.Duration
+	var alerts configfile.JSONValue
+	flag.Var(&alerts, "alerts", "JSON alert settings with rules and webhook receivers")
 	var tlsEnabled, webTLSEnabled bool
 	var driver, authToken, password string
 	flag.BoolVar(&tlsEnabled, "tls-enabled", true, "enable gRPC mutual TLS")
@@ -51,6 +54,10 @@ func run() error {
 	if err := configfile.Parse(flag.CommandLine, os.Args[1:], map[string]string{"web-password": "MONITOR_WEB_PASSWORD", "auth-token": "MONITOR_AUTH_TOKEN", "db": "MONITOR_DB"}); err != nil {
 		return err
 	}
+	alertCfg, err := loadAlertConfig(alerts.String())
+	if err != nil {
+		return err
+	}
 	if password == "" || webUser == "" {
 		return errors.New("set web-user and web-password (or MONITOR_WEB_PASSWORD)")
 	}
@@ -60,12 +67,16 @@ func run() error {
 	if tlsEnabled && (cert == "" || key == "" || ca == "") {
 		return errors.New("-tls-cert, -tls-key and -tls-ca are required")
 	}
-	host, _, err := net.SplitHostPort(webAddr)
+	host, webPort, err := net.SplitHostPort(webAddr)
 	if err != nil {
 		return err
 	}
-	if webTLSEnabled && ((webCert == "") != (webKey == "") || (!net.ParseIP(host).IsLoopback() && webCert == "")) {
+	if webTLSEnabled && ((webCert == "") != (webKey == "") || (!webLoopback(host) && webCert == "")) {
 		return errors.New("set both -web-cert and -web-key for Web access outside the loopback address")
+	}
+	if webTLSEnabled && webCert == "" && strings.EqualFold(host, "localhost") {
+		// Keep the local HTTP exception on loopback even if name resolution is overridden.
+		webAddr = net.JoinHostPort("127.0.0.1", webPort)
 	}
 	grpcOptions := []grpc.ServerOption{grpc.MaxRecvMsgSize(transport.MaxMessageBytes), grpc.MaxSendMsgSize(transport.MaxMessageBytes)}
 	if tlsEnabled {
@@ -91,6 +102,16 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	h := &hub{store: storage, offlineAfter: offlineAfter, sessions: make(map[string]*session), plaintext: !tlsEnabled, authToken: authToken}
+	alertInit, cancelAlertInit := context.WithTimeout(ctx, 15*time.Second)
+	storage.alerts, err = newAlertEngine(alertInit, storage, alertCfg)
+	cancelAlertInit()
+	if err != nil {
+		return err
+	}
+	if alertCfg.Enabled {
+		go storage.alerts.run(ctx, h)
+		go storage.alerts.deliver(ctx)
+	}
 	gs := grpc.NewServer(grpcOptions...)
 	protocol.RegisterMonitorServer(gs, h)
 	defer gs.Stop()
@@ -134,4 +155,8 @@ func run() error {
 		defer cancel()
 		return web.Shutdown(shutdown)
 	}
+}
+
+func webLoopback(host string) bool {
+	return strings.EqualFold(host, "localhost") || net.ParseIP(host).IsLoopback()
 }

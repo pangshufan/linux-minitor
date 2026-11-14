@@ -56,7 +56,7 @@ function badge(online, state) {
 }
 
 let fleet = [], host = null, detail = null, liveMetrics = null, liveInventory = null, points = [];
-let epoch = 0, historyRange = '', historyFetched = 0, nextRefresh;
+let epoch = 0, historyRange = '', historyWindow = '', historyFetched = 0, nextRefresh;
 
 async function api(path, options) {
   const response = await fetch(path, options);
@@ -98,16 +98,30 @@ function renderDetail() {
   const metrics = liveMetrics?.metrics ?? detail.metrics ?? {};
   const memory = metrics.memory_bytes ?? {};
   const mounts = (liveMetrics?.filesystems ?? detail.filesystems)?.mounts ?? [];
-  const primary = metrics.windows?.[0];
+  const windows = metrics.windows ?? [];
+  const select = el('window');
+  const selected = select.value;
+  const options = windows.slice(1).map(w => String(w.requested_ms));
+  const windowList = windows.map(w => w.requested_ms).join(',');
+  if (windowList !== select.dataset.windows) {
+    select.dataset.windows = windowList;
+    const base = windows[0] ? '基础窗口（' + windows[0].requested_ms / 1000 + ' 秒）' : '基础窗口';
+    select.replaceChildren(new Option(base, ''), ...options.map(value =>
+      new Option(Number(value) / 1000 + ' 秒', value)));
+    select.value = options.includes(selected) ? selected : '';
+  }
+  const primary = select.value ? windows.find(w => w.requested_ms === Number(select.value)) : windows[0];
   const cpu = primary?.cpu_percent?.cpu?.busy;
-  const root = mounts.find(m => m.target === '/')?.capacity;
+  const windowsHost = system.id === 'windows';
+  const systemVolume = system.system_volume?.toLowerCase();
+  const root = mounts.find(m => m.target === '/' || m.target?.toLowerCase() === systemVolume)?.capacity;
   el('host-title').textContent = system.hostname ?? detail.host_id;
   el('host-subtitle').replaceChildren(badge(detail.online, detail.collection_status),
     document.createTextNode('  ' + detail.host_id + ' · ' + (statusText[detail.collection_status] ?? '') + ' · 指标采集于 ' + date(metrics.collected_at)));
   const cards = [
     ['CPU', percent(cpu)], ['内存', percent(ratio(memory.used, memory.total))],
     ['Swap', percent(ratio(memory.swap_used, memory.swap_total))],
-    ['根分区已用', percent(ratio(root?.used_bytes, root?.total_bytes))],
+    [windowsHost ? '系统卷已用' : '根分区已用', percent(ratio(root?.used_bytes, root?.total_bytes))],
     ['运行时长', Number.isFinite(metrics.uptime_seconds) ? (metrics.uptime_seconds / 86400).toFixed(1) + ' 天' : dash]
   ];
   el('cards').replaceChildren(...cards.map(([label, value]) => {
@@ -161,7 +175,6 @@ function renderDetail() {
     ...(hardware.network_interfaces ?? []).map(n => ['网卡', n.name, [n.mac, n.speed_mbps && n.speed_mbps + ' Mbps'].filter(Boolean).join(' · '), [n.driver, n.oper_state].filter(Boolean).join(' · ')])
   ]);
   el('live-metrics').disabled = el('live-inventory').disabled = !detail.online;
-  renderChart();
 }
 
 const expandedServices = new Map();
@@ -188,7 +201,7 @@ function renderServices(processes, primary) {
     const rates = primary?.rates?.[s.key] ?? {};
     const stats = node('dl', undefined, 'facts');
     stats.append(...factList([
-      ['CPU', percent(rates.cpu_percent)], ['RSS 合计', byte(s.rss_sum_bytes)],
+      ['CPU', percent(rates.cpu_percent)], [s.metric_sources?.rss_sum === 'windows_working_set' ? '工作集合计' : 'RSS 合计', byte(s.rss_sum_bytes)],
       ['cgroup 内存', byte(s.cgroup_memory_bytes)], ['PSS 合计', byte(s.pss_sum_bytes)],
       ['线程 / FD 合计', (s.threads ?? dash) + ' / ' + (s.fd_sum ?? dash)],
       ['读取 / 写入', byteRate(rates.read_bytes) + ' / ' + byteRate(rates.write_bytes)],
@@ -206,7 +219,7 @@ function renderServices(processes, primary) {
     }
     const t = node('table'), head = node('thead'), body = node('tbody');
     const labels = node('tr');
-    for (const label of ['进程树 / PID', '状态', 'CPU', 'RSS', '线程 / FD', '累计读 / 写', '读取 / 写入', 'JVM Xmx', '启动时间']) labels.append(node('th', label));
+    for (const label of ['进程树 / PID', '状态', 'CPU', 'RSS / 工作集', '线程 / FD / 句柄', '累计读 / 写', '读取 / 写入', 'JVM Xmx', '启动时间']) labels.append(node('th', label));
     head.append(labels);
     const visited = new Set();
     const append = (first, initialDepth) => {
@@ -218,7 +231,7 @@ function renderServices(processes, primary) {
         const r = primary?.rates?.[p.key] ?? {};
         const label = node('span', (depth ? '└─ ' : '') + p.name + ' · ' + p.pid, 'process-name');
         label.style.paddingInlineStart = Math.min(depth, 20) * 18 + 'px';
-        body.append(row([label, p.state, percent(r.cpu_percent), byte(p.rss_bytes), p.threads + ' / ' + (p.fd_count ?? dash),
+        body.append(row([label, p.state, percent(r.cpu_percent), byte(p.working_set_bytes ?? (processes.lifecycle_source === 'windows_process_snapshot' ? null : p.rss_bytes)), p.threads + ' / ' + (p.fd_count ?? dash) + ' / ' + (p.handle_count ?? dash),
           byte(p.io_counters?.read_bytes) + ' / ' + byte(p.io_counters?.write_bytes), byteRate(r.read_bytes) + ' / ' + byteRate(r.write_bytes),
           byte(p.jvm_max_heap_bytes), date(p.started_at)]));
         const descendants = (children.get(p.key) ?? []).slice().sort((a,b) => b.pid - a.pid);
@@ -253,7 +266,7 @@ function chartSeries() {
     for (const service of p.services ?? []) {
       const key = service.key, name = service.name;
       series.set(key + ':cpu', [name + ' CPU %', point => point.rates?.[key]?.cpu_percent, percent]);
-      series.set(key + ':rss', [name + ' RSS 合计', point => point.services?.find(s => s.key === key)?.rss_sum_bytes, byte]);
+      series.set(key + ':rss', [name + (service.metric_sources?.rss_sum === 'windows_working_set' ? ' 工作集合计' : ' RSS 合计'), point => point.services?.find(s => s.key === key)?.rss_sum_bytes, byte]);
       for (const field of ['read_bytes', 'write_bytes']) series.set(key + ':' + field,
         [name + (field === 'read_bytes' ? ' 读取' : ' 写入'), point => point.rates?.[key]?.[field], byteRate]);
     }
@@ -342,9 +355,17 @@ async function refresh(revision) {
       if (liveInventory && data.inventory_ms >= Date.parse(liveInventory.collected_at)) liveInventory = null;
       renderDetail();
       const range = el('range').value;
-      if (range !== historyRange || Date.now() - historyFetched >= 30000) {
-        const cursor = range === historyRange ? points.at(-1)?.received_ms : undefined;
+      const windowMS = el('window').value;
+      const sameQuery = range === historyRange && windowMS === historyWindow;
+      if (!sameQuery || Date.now() - historyFetched >= 30000) {
+        if (!sameQuery) {
+          points = [];
+          el('chart').replaceChildren();
+          el('history-note').textContent = '正在加载历史数据…';
+        }
+        const cursor = sameQuery ? points.at(-1)?.received_ms : undefined;
         const params = new URLSearchParams({range});
+        if (windowMS) params.set('window_ms', windowMS);
         if (cursor !== undefined) params.set('since_ms', cursor);
         const history = await api(endpoint + '/history?' + params);
         if (revision !== epoch) return;
@@ -354,6 +375,7 @@ async function refresh(revision) {
         points = previous.concat(history).filter(p => p.received_ms >= cutoff).slice(-3000);
         historyFetched = Date.now();
         historyRange = range;
+        historyWindow = windowMS;
         renderChart();
       }
     }
@@ -392,13 +414,21 @@ function route() {
   el('live-message').textContent = '';
   detail = liveMetrics = liveInventory = null;
   points = [];
+  el('chart').replaceChildren();
+  el('history-note').textContent = '';
   historyRange = '';
+  historyWindow = '';
+  el('window').value = '';
   historyFetched = 0;
   refresh(++epoch);
 }
 
 el('filter').addEventListener('change', renderFleet);
 el('range').addEventListener('change', () => refresh(++epoch));
+el('window').addEventListener('change', () => {
+  renderDetail();
+  refresh(++epoch);
+});
 el('series').addEventListener('change', renderChart);
 el('live-inventory').addEventListener('click', () => live('inventory'));
 el('live-metrics').addEventListener('click', () => live('latest'));

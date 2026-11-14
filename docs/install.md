@@ -1,6 +1,6 @@
 # 安装与配置
 
-Agent 支持 Linux 4.18 及以上，提供 AMD64 和 ARM64 包。Server 提供 Linux AMD64、Linux ARM64 和 Windows AMD64 包，内置 Web 页面，支持 SQLite 和 PostgreSQL。GitHub Actions 的 **Build packages** 工作流会在 push、PR 和手动触发时生成归档，产物可在对应运行的 **Artifacts** 中下载。Windows 包为 ZIP，Linux 包为 tar.gz。Linux 包中附带对应的 systemd 单元。
+Agent 提供 Linux AMD64/ARM64 和 Windows AMD64 包。Linux 内核要求 4.18 及以上。Windows 首版面向 Server 2022/2025，启动检查允许 Server 2019 及同代或更新的 Windows 客户端。Server 提供 Linux AMD64、Linux ARM64 和 Windows AMD64 包，内置 Web 页面，支持 SQLite 和 PostgreSQL。GitHub Actions 的 **Build packages** 工作流会在 push、PR 和手动触发时生成归档，产物可在对应运行的 **Artifacts** 中下载。Windows 包为 ZIP，Linux 包为 tar.gz。Linux 包中附带对应的 systemd 单元。
 
 ## 选择加密方式
 
@@ -121,6 +121,40 @@ sudo journalctl -u monitor-server.service -n 50 --no-pager
 
 修改 JSON 或环境文件后重启对应服务。修改 systemd 单元后先执行 `daemon-reload`，再重启。Web 的 `/healthz` 可检查 HTTP 服务，登录后可检查 Agent 在线状态及历史。
 
+## 安装 Windows Agent
+
+解压 Windows AMD64 Agent 包。在管理员 PowerShell 中准备配置目录和证书，先以控制台方式确认可以连到 Server。
+
+```powershell
+$dir = Join-Path $env:ProgramData Monitor
+New-Item -ItemType Directory -Force $dir
+icacls $dir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'
+Copy-Item .\configs\agent-windows.json (Join-Path $dir agent.json)
+notepad (Join-Path $dir agent.json)
+.\bin\monitor-agent.exe -config (Join-Path $dir agent.json)
+```
+
+按实际环境填写 Server 地址、与证书 URI 匹配的主机 ID、证书及私钥路径。Windows Service 的工作目录由系统管理，配置中的证书应使用绝对路径。服务安装脚本把可执行文件复制到 Program Files，注册固定名称 `MonitorAgent`，以 LocalSystem 服务账号自动启动。控制台验证完成后按 Ctrl+C，然后运行：
+
+```powershell
+.\install-agent.ps1
+Get-Service MonitorAgent
+Restart-Service MonitorAgent
+```
+
+只需卸载服务时，在管理员 PowerShell 中执行 `Stop-Service MonitorAgent`，再执行 `sc.exe delete MonitorAgent`。升级时先停止服务，替换 Program Files 下 Monitor 目录中的可执行文件，再启动服务。
+
+Windows 默认不采集进程明细。在 `process-services` 中填写 SCM 的服务名称，或选择可执行文件的绝对路径。可通过 `Get-Service` 的 Name 字段查询 SCM 名称。同路径的多个进程可归入同组。若需区分使用同一个 Java 可执行文件的多个服务，使用各自的 SCM 服务名。
+
+```json
+[
+  {"name":"Print Spooler","match":{"windows_service":"Spooler"}},
+  {"name":"应用进程","match":{"executable":"C:/Apps/example/example.exe"}}
+]
+```
+
+Windows 首版采集整机 CPU、物理内存、启动时间、网卡速率、本地固定卷容量、基础硬件清单、已配置服务状态，以及可访问进程的 CPU、工作集和句柄数。支持进程树和多计算窗口。共享宿主进程的服务只报告 SCM 状态，权限不足或服务处于启停过渡状态时报告不完整或未知。Windows 暂无命令行参数选择器、PSS、磁盘吞吐率、物理磁盘拓扑和 Storage Spaces 拓扑。
+
 ## 启动 Windows Server
 
 解压 Windows AMD64 包。在 PowerShell 中进入解压目录，准备 Server JSON，并按上述方式放置证书。JSON 中使用正斜杠路径或对反斜杠进行转义。SQLite 的父目录须先创建。
@@ -178,8 +212,9 @@ JSON 键与命令行参数同名。优先级从低到高依次为默认值、配
 | web-cert / web-key | 空 | Web HTTPS 证书和私钥，启用时成对配置 |
 | web-user | monitor | Web/API Basic Auth 用户名 |
 | web-password | 空，必填 | Web/API 密码，也可通过 MONITOR_WEB_PASSWORD 提供 |
+| alerts | 总开关关闭 | 告警规则、默认阈值及 Webhook 配置见 [告警配置与对接](alerts.md) |
 | offline-after | 15s | 心跳超时，必须大于 1s |
-| retention | 168h | 历史数据保留时间，必须为正，每小时清理 |
+| retention | 168h | 历史数据保留时间，必须为正，每小时清理样本、无引用的配置版本和符合条件的已关闭告警 |
 
 ### 进程服务选择器
 

@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "rules": {
+    "cpu": {"enabled": true, "threshold": 90, "trigger_count": 3, "recover_count": 2},
+    "memory": {"enabled": true, "threshold": 90},
+    "disk": {"enabled": true, "threshold": 90},
+    "service_stopped": {"enabled": true, "trigger_count": 2, "recover_count": 2},
+    "host_offline": {"enabled": true, "threshold": 60},
+    "collection_stalled": {"enabled": true, "threshold": 60},
+    "snapshot_missing": {"enabled": true, "threshold": 90}
+  },
+  "receivers": {}
+}

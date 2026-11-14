@@ -21,12 +21,11 @@ import (
 type store struct {
 	db       *sql.DB
 	postgres bool
+	alerts   *alertEngine
 }
 
 const schema = `
 PRAGMA journal_mode = WAL;
-PRAGMA foreign_keys = ON;
-PRAGMA busy_timeout = 5000;
 CREATE TABLE IF NOT EXISTS hosts (
   host_id TEXT PRIMARY KEY, last_seen_ms INTEGER NOT NULL, report_interval_ms INTEGER NOT NULL,
   inventory_version TEXT NOT NULL DEFAULT '', inventory_ms INTEGER NOT NULL DEFAULT 0,
@@ -44,6 +43,7 @@ CREATE TABLE IF NOT EXISTS samples (
   PRIMARY KEY(host_id, run_id, sample_id)
 );
 CREATE INDEX IF NOT EXISTS samples_by_host_order ON samples(host_id, received_ms DESC, collected_at DESC, run_id DESC, sample_id DESC);
+CREATE INDEX IF NOT EXISTS samples_by_inventory ON samples(host_id, inventory_version);
 CREATE INDEX IF NOT EXISTS samples_by_time ON samples(received_ms);
 `
 
@@ -57,6 +57,12 @@ func openDatabase(driver, dsn string) (*store, error) {
 	sqlDriver := driver
 	if pg {
 		sqlDriver = "pgx"
+	} else {
+		separator := "?"
+		if strings.Contains(dsn, "?") {
+			separator = "&"
+		}
+		dsn += separator + "_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
 	}
 	db, err := sql.Open(sqlDriver, dsn)
 	if err != nil {
@@ -185,6 +191,10 @@ func (s *store) save(ctx context.Context, id, run string, snap *protocol.Snapsho
 		return err
 	}
 	defer tx.Rollback()
+	// Serialize inventory publication with orphan collection for this host.
+	if _, err := s.execTx(tx, ctx, "UPDATE hosts SET last_seen_ms=? WHERE host_id=?", now.UnixMilli(), id); err != nil {
+		return err
+	}
 	if version != "" {
 		if _, err := s.execTx(tx, ctx, "INSERT INTO inventories VALUES(?,?,?) ON CONFLICT(host_id,version) DO NOTHING", id, version, snap.InventoryJson); err != nil {
 			return err
@@ -204,15 +214,24 @@ func (s *store) save(ctx context.Context, id, run string, snap *protocol.Snapsho
 		if count, err := res.RowsAffected(); err != nil {
 			return err
 		} else if count > 0 {
-			if _, err := s.execTx(tx, ctx, `UPDATE hosts SET run_id=?, sample_id=?, latest_ms=?, metrics=?, filesystems=COALESCE(?,filesystems)
+			updated, err := s.execTx(tx, ctx, `UPDATE hosts SET run_id=?, sample_id=?, latest_ms=?, metrics=?, filesystems=COALESCE(?,filesystems)
 				WHERE host_id=? AND (run_id<>? OR sample_id<?)`, run, metric.SampleID, now.UnixMilli(),
-				snap.MetricsJson, fsPayload, id, run, metric.SampleID); err != nil {
+				snap.MetricsJson, fsPayload, id, run, metric.SampleID)
+			if err != nil {
 				return err
 			}
+			if s.alerts != nil && s.alerts.cfg.Enabled {
+				changed, err := updated.RowsAffected()
+				if err != nil {
+					return err
+				}
+				if changed > 0 {
+					if err := s.alerts.sample(ctx, tx, id, snap, now); err != nil {
+						return err
+					}
+				}
+			}
 		}
-	}
-	if _, err := s.execTx(tx, ctx, "UPDATE hosts SET last_seen_ms=? WHERE host_id=?", now.UnixMilli(), id); err != nil {
-		return err
 	}
 	return tx.Commit()
 }
@@ -229,6 +248,7 @@ type hostRecord struct {
 	Filesystems      json.RawMessage `json:"filesystems,omitempty"`
 	Online           bool            `json:"online"`
 	Collecting       string          `json:"collection_status"`
+	ProgressMS       int64           `json:"-"`
 	ConnectedMS      int64           `json:"connected_ms,omitempty"`
 }
 
@@ -275,7 +295,7 @@ type historyPoint struct {
 	InventoryVersion string                        `json:"inventory_version,omitempty"`
 }
 
-func (s *store) history(ctx context.Context, id string, since time.Time) ([]historyPoint, error) {
+func (s *store) history(ctx context.Context, id string, since time.Time, windowMS float64) ([]historyPoint, error) {
 	rows, err := s.query(ctx, `SELECT collected_at,received_ms,inventory_version,metrics,filesystems FROM samples
 		WHERE host_id=? AND received_ms>=? ORDER BY received_ms DESC, collected_at DESC, run_id DESC, sample_id DESC LIMIT 3000`, id, since.UnixMilli())
 	if err != nil {
@@ -305,13 +325,17 @@ func (s *store) history(ctx context.Context, id string, since time.Time) ([]hist
 		if err := json.Unmarshal(metrics, &sample); err != nil {
 			return nil, fmt.Errorf("stored metrics: %w", err)
 		}
-		if len(sample.Windows) > 0 {
-			w := sample.Windows[0]
+		p.WindowMS = windowMS
+		for _, w := range sample.Windows {
+			if p.WindowMS != 0 && w.Requested != p.WindowMS {
+				continue
+			}
 			p.ServiceStatus = w.ServiceStatus
 			p.WindowMS, p.ActualWindowMS, p.Rates = w.Requested, w.Elapsed, w.Rates
 			if n, ok := w.CPU["cpu"]["busy"]; ok {
 				p.CPU = &n
 			}
+			break
 		}
 		p.Services = sample.Processes.Services
 		p.Memory = utilization(sample.Memory, "used", "total")
@@ -332,9 +356,4 @@ func utilization(metrics map[string]uint64, used, total string) *float64 {
 	}
 	pct := 100 * float64(n) / float64(metrics[total])
 	return &pct
-}
-
-func (s *store) prune(ctx context.Context, before time.Time) error {
-	_, err := s.exec(ctx, "DELETE FROM samples WHERE received_ms < ?", before.UnixMilli())
-	return err
 }

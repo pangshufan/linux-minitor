@@ -8,12 +8,10 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/signal"
-	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"monitor/internal/configfile"
@@ -79,10 +77,7 @@ func parseConfig() (config, error) {
 		return c, errors.New("use process-services without legacy process-names/process-match")
 	}
 	if c.hostID == "" {
-		c.hostID = firstText("/etc/machine-id", "/var/lib/dbus/machine-id")
-		if c.hostID == "" {
-			c.hostID, _ = os.Hostname()
-		}
+		c.hostID = platformHostID()
 	}
 	if !transport.ValidHostID(c.hostID) {
 		return c, errors.New("specify a valid -host-id (letters, digits, dots, underscores or hyphens)")
@@ -136,15 +131,9 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	if runtime.GOOS != "linux" {
-		return errors.New("monitor agent requires Linux")
-	}
-	kernel, err := kernelRelease()
+	version, err := checkPlatform(c)
 	if err != nil {
 		return err
-	}
-	if !supportedKernel(kernel) {
-		return fmt.Errorf("Linux kernel >= 4.18 is required, found %q", kernel)
 	}
 	var tlsConfig *tls.Config
 	if c.tlsEnabled {
@@ -154,15 +143,19 @@ func run() error {
 		}
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	a := &agent{hostID: c.hostID}
-	go a.collectMetrics(ctx, c)
-	go periodically(ctx, c.inventory, true, func() { a.collectInventory(ctx, kernel) })
-	go periodically(ctx, c.filesystems, true, a.collectFilesystems)
-
-	log.Printf("agent host=%s kernel=%s server=%s", a.hostID, kernel, c.server)
-	return a.connect(ctx, c, tlsConfig)
+	return runPlatform(func(ctx context.Context) error {
+		ctx, cancel := context.WithCancel(ctx)
+		a := &agent{hostID: c.hostID}
+		var collectors sync.WaitGroup
+		collectors.Go(func() { a.collectMetrics(ctx, c) })
+		collectors.Go(func() { periodically(ctx, c.inventory, true, func() { a.collectInventory(ctx, version) }) })
+		collectors.Go(func() { periodically(ctx, c.filesystems, true, a.collectFilesystems) })
+		log.Printf("agent host=%s system=%s server=%s", a.hostID, version, c.server)
+		err := a.connect(ctx, c, tlsConfig)
+		cancel()
+		collectors.Wait()
+		return err
+	})
 }
 
 func supportedKernel(release string) bool {

@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>告警 · 服务器监控</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/alerts.js" defer></script>
+</head>
+<body>
+  <header class="top"><a href="/" class="brand">服务器监控</a><a href="/alerts.html" aria-current="page">告警</a></header>
+  <main>
+    <div class="heading"><div><h1>告警</h1><p id="alert-status" role="status" class="muted"></p></div><button id="alert-refresh">刷新</button></div>
+    <p id="error" role="alert"></p>
+    <section class="panel"><h2>当前告警</h2><div id="alert-active" class="scroll"></div></section>
+    <section class="panel"><h2>近期事件与投递</h2><div id="alert-events" class="scroll"></div></section>
+    <section class="panel"><h2>生效规则</h2><div id="alert-rules" class="scroll"></div></section>
+  </main>
+</body>
+</html>

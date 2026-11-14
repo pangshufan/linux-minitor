@@ -9,8 +9,10 @@ import (
 	"errors"
 	"io/fs"
 	"log"
+	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"monitor/internal/transport"
@@ -29,8 +31,10 @@ func (h *hub) webRoutes(user, password string) http.Handler {
 	})
 	mux.HandleFunc("GET /api/hosts", h.listHosts)
 	mux.HandleFunc("GET /api/hosts/{id}", h.hostDetails)
+	mux.HandleFunc("DELETE /api/hosts/{id}", h.retireHost)
 	mux.HandleFunc("GET /api/hosts/{id}/history", h.hostHistory)
 	mux.HandleFunc("POST /api/hosts/{id}/query/{kind}", h.liveQuery)
+	h.alertRoutes(mux)
 	wantUser, wantPass := sha256.Sum256([]byte(user)), sha256.Sum256([]byte(password))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -117,7 +121,7 @@ func summarize(record hostRecord) hostSummary {
 	}
 	result.Memory = utilization(metric.Memory, "used", "total")
 	for _, mount := range filesystems.Mounts {
-		if mount.Target == "/" {
+		if mount.Target == "/" || strings.EqualFold(mount.Target, inventory.System["system_volume"]) {
 			result.Root = utilization(mount.Capacity, "used_bytes", "total_bytes")
 			break
 		}
@@ -160,7 +164,16 @@ func (h *hub) hostHistory(w http.ResponseWriter, r *http.Request) {
 			since = cursor
 		}
 	}
-	points, err := h.store.history(r.Context(), r.PathValue("id"), since)
+	var window float64
+	if raw := r.URL.Query().Get("window_ms"); raw != "" {
+		var err error
+		window, err = strconv.ParseFloat(raw, 64)
+		if err != nil || math.IsNaN(window) || math.IsInf(window, 0) || window < 0 {
+			writeError(w, http.StatusBadRequest, "window_ms must be a finite nonnegative duration")
+			return
+		}
+	}
+	points, err := h.store.history(r.Context(), r.PathValue("id"), since, window)
 	if err != nil {
 		storageError(w, err)
 		return

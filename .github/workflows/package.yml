@@ -17,6 +17,7 @@ jobs:
         include:
           - { component: agent, os: linux, arch: amd64 }
           - { component: agent, os: linux, arch: arm64 }
+          - { component: agent, os: windows, arch: amd64 }
           - { component: server, os: linux, arch: amd64 }
           - { component: server, os: linux, arch: arm64 }
           - { component: server, os: windows, arch: amd64 }
@@ -42,11 +43,17 @@ jobs:
           if [[ "$TARGET_OS" == windows ]]; then executable+=".exe"; fi
           CGO_ENABLED=0 GOOS="$TARGET_OS" GOARCH="$TARGET_ARCH" \
             go build -mod=readonly -trimpath -o "$package/bin/$executable" "./$COMPONENT"
-          cp docs/install.md "$package/docs/"
+          cp docs/install.md docs/agent-integration.md "$package/docs/"
           if [[ "$COMPONENT" == agent ]]; then
-            cp configs/agent*.json "$package/configs/"
+            if [[ "$TARGET_OS" == windows ]]; then
+              cp configs/agent-windows.json "$package/configs/"
+              cp deploy/windows/install-agent.ps1 "$package/"
+            else
+              cp configs/agent.json configs/agent-services.example.json "$package/configs/"
+            fi
           else
-            cp configs/server*.json "$package/configs/"
+            cp configs/server*.json configs/alerts.example.json "$package/configs/"
+            cp docs/alerts.md "$package/docs/"
             cp deploy/postgres-history-index.sql "$package/"
           fi
           if [[ "$TARGET_OS" == linux ]]; then
@@ -62,3 +69,12 @@ jobs:
             dist/*.tar.gz
             dist/*.zip
           if-no-files-found: error
+
+  test-windows-agent:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test -mod=readonly ./agent

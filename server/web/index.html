@@ -8,7 +8,7 @@
   <script src="/app.js" defer></script>
 </head>
 <body>
-  <header class="top"><a href="#" class="brand"><span aria-hidden="true">▥</span> 服务器监控</a><span class="muted">运维控制台</span></header>
+  <header class="top"><a href="#" class="brand"><span aria-hidden="true">▥</span> 服务器监控</a><a href="/alerts.html">告警</a></header>
   <main>
     <section id="fleet">
       <div class="heading"><div><h1>服务器列表</h1><p id="fleet-summary" class="muted"></p></div>
@@ -26,7 +26,7 @@
       <section class="panel"><h2>系统与硬件</h2><dl id="system" class="facts"></dl></section>
       <section class="panel">
         <div class="heading"><div><h2>资源趋势</h2><p id="history-note" class="muted"></p></div>
-          <div class="actions"><label>指标 <select id="series"></select></label><label>范围 <select id="range"><option value="1h">最近 1 小时</option><option value="6h">最近 6 小时</option><option value="24h">最近 24 小时</option></select></label></div>
+          <div class="actions"><label>计算窗口 <select id="window"><option value="">基础窗口</option></select></label><label>指标 <select id="series"></select></label><label>范围 <select id="range"><option value="1h">最近 1 小时</option><option value="6h">最近 6 小时</option><option value="24h">最近 24 小时</option></select></label></div>
         </div>
         <div id="chart"></div>
       </section>

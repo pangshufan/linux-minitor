@@ -1,3 +1,5 @@
+//go:build !windows
+
 package main
 
 import (
@@ -54,7 +56,7 @@ func (m cgroupMount) directory(group string) (string, bool) {
 	return filepath.Join(m.path, rel), true
 }
 func (c *processCollector) groupPIDs(group string, recursive bool) ([]int, error) {
-	var last error
+	var last, inaccessible error
 	for _, m := range c.mounts {
 		dir, ok := m.directory(group)
 		if !ok {
@@ -62,15 +64,29 @@ func (c *processCollector) groupPIDs(group string, recursive bool) ([]int, error
 		}
 		if _, err := os.Stat(dir); err != nil {
 			last = err
+			if !os.IsNotExist(err) {
+				inaccessible = err
+			} else if _, mountErr := os.Stat(m.path); mountErr != nil {
+				inaccessible = fmt.Errorf("cgroup mount %s unavailable: %v", m.path, mountErr)
+			}
 			continue
 		}
 		out, partial := readGroupPIDs(dir, recursive)
+		if partial != nil && len(out) == 0 && os.IsNotExist(partial) {
+			if _, err := os.Stat(dir); os.IsNotExist(err) {
+				last = err
+				continue
+			}
+		}
 		if c.groupMemberships == nil {
 			c.groupMemberships = map[string]groupMembership{}
 		}
 		c.groupMemberships[group] = groupMembership{mount: m, pids: out}
 		return out, partial
 
+	}
+	if inaccessible != nil {
+		return nil, inaccessible
 	}
 	if last == nil {
 		last = fmt.Errorf("no readable cgroup hierarchy for %s", group)

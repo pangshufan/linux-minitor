@@ -1,3 +1,5 @@
+//go:build !windows
+
 package main
 
 import (
@@ -113,5 +115,16 @@ func TestHybridHierarchyDoesNotMixUnrelatedCounters(t *testing.T) {
 	counters, _, _, _, _ = c.groupMetrics("/app")
 	if counters["cpu_time_ns"] != 9000000000 {
 		t.Fatal("matching v1 controller not used")
+	}
+}
+
+func TestSystemdVanishedCgroupIsStopped(t *testing.T) {
+	root := t.TempDir()
+	c := &processCollector{root: root, clock: 100, mounts: []cgroupMount{{path: root, root: "/", v2: true}},
+		unitLookup: func(string) (string, error) { return "/gone", nil }}
+	cfg := config{processes: true, processLimit: 10, services: []serviceConfig{{Name: "app", Match: serviceMatch{SystemdUnit: "app.service"}}}}
+	s, _ := collectFixture(c, cfg, time.Now())
+	if s.Processes.Services[0].State != "stopped" || !s.Processes.Services[0].Complete {
+		t.Fatalf("vanished systemd cgroup: %+v", s.Processes.Services[0])
 	}
 }

@@ -60,6 +60,30 @@ func TestPostgresRoundTrip(t *testing.T) {
 	}
 	defer db.db.Close()
 	testStoreRoundTrip(t, db)
+	cfgAlerts, err := loadAlertConfig(`{"enabled":true,"rules":{"service_stopped":{"trigger_count":1}},"receivers":{"test":{"url":"https://receiver.example/alerts"}}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	db.alerts, err = newAlertEngine(ctx, db, cfgAlerts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	snapshot := &protocol.Snapshot{MetricsJson: []byte(fmt.Sprintf(
+		`{"sample_id":2,"collected_at":%q,"processes":{"services":[{"key":"service/nginx","name":"nginx","state":"stopped"}]}}`, now.Format(time.RFC3339Nano)))}
+	if err := db.save(ctx, "node", "run-2", snapshot, now); err != nil {
+		t.Fatal(err)
+	}
+	if processed, err := db.alerts.deliverOne(ctx, &http.Client{Transport: alertRoundTripper(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusNoContent, Body: http.NoBody}, nil
+	})}, now); err != nil || !processed {
+		t.Fatalf("PostgreSQL delivery: processed=%t err=%v", processed, err)
+	}
+	var delivered int
+	if err := db.db.QueryRow("SELECT count(*) FROM alert_deliveries WHERE status='delivered'").Scan(&delivered); err != nil || delivered != 1 {
+		t.Fatalf("PostgreSQL delivered=%d err=%v", delivered, err)
+	}
 }
 
 func testStoreRoundTrip(t *testing.T, db *store) {
@@ -85,7 +109,7 @@ func testStoreRoundTrip(t *testing.T, db *store) {
 	save("run-1", 1, start, "before")
 	save("run-1", 1, start.Add(time.Second), "before")
 	save("run-2", 1, start.Add(2*time.Second), "after")
-	points, err := db.history(ctx, "node", start)
+	points, err := db.history(ctx, "node", start, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,5 +180,102 @@ func TestHistoryCursorIncludesAllSamplesAtBoundary(t *testing.T) {
 	}
 	if len(points) != 2 || points[0].ReceivedMS != boundary.UnixMilli() || points[1].ReceivedMS != boundary.UnixMilli() {
 		t.Fatalf("expected both boundary samples, got %+v", points)
+	}
+}
+
+func TestSQLitePragmasOnReplacementConnection(t *testing.T) {
+	db, err := openStore(filepath.Join(t.TempDir(), "monitor.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.db.Close()
+	db.db.SetMaxIdleConns(0)
+	for _, cfg := range []struct {
+		pragma string
+		want   int
+	}{{"foreign_keys", 1}, {"busy_timeout", 5000}} {
+		var got int
+		if err := db.db.QueryRow("PRAGMA " + cfg.pragma).Scan(&got); err != nil || got != cfg.want {
+			t.Fatalf("%s: got=%d want=%d err=%v", cfg.pragma, got, cfg.want, err)
+		}
+	}
+}
+
+func TestRetentionAndRetirement(t *testing.T) {
+	ctx := context.Background()
+	db, err := openStore(filepath.Join(t.TempDir(), "monitor.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.db.Close()
+	cfg, err := loadAlertConfig(`{"rules":{}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.alerts, err = newAlertEngine(ctx, db, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.hello(ctx, &protocol.Hello{HostId: "old", ReportIntervalMs: 30000}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	for _, sql := range []string{
+		"UPDATE hosts SET inventory_version='current' WHERE host_id='old'",
+		"INSERT INTO inventories VALUES('old','orphan','{}'),('old','current','{}'),('old','sampled','{}')",
+		"INSERT INTO samples VALUES('old','run',1,'',100,'sampled','{}',NULL)",
+		"INSERT INTO alert_instances(id,active_key,rule_id,rule_version,host_id,target,state,hits,clears,last_observation,created_ms,updated_ms) VALUES ('old-event',NULL,'cpu','','old','','resolved',0,0,0,0,0),('queued',NULL,'cpu','','old','','resolved',0,0,0,0,0)",
+		"INSERT INTO alert_events VALUES('sent','old-event',1,0,'{}'),('waiting','queued',1,0,'{}')",
+		"INSERT INTO alert_deliveries(event_id,receiver,status,due_ms) VALUES('sent','demo','delivered',0),('waiting','demo','pending',0)",
+	} {
+		if _, err := db.exec(ctx, sql); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assertCount := func(table string, want int) {
+		t.Helper()
+		var n int
+		if err := db.db.QueryRow("SELECT count(*) FROM " + table).Scan(&n); err != nil || n != want {
+			t.Fatalf("%s: count=%d want=%d err=%v", table, n, want, err)
+		}
+	}
+	if err := db.prune(ctx, time.UnixMilli(50)); err != nil {
+		t.Fatal(err)
+	}
+	assertCount("inventories", 2)
+	assertCount("samples", 1)
+	assertCount("alert_instances", 1)
+	assertCount("alert_events", 1)
+	assertCount("alert_deliveries", 1)
+	if err := db.retire(ctx, "old", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	assertCount("hosts", 0)
+	assertCount("inventories", 0)
+	assertCount("samples", 0)
+	assertCount("alert_events", 1)
+}
+
+func TestHistorySelectsRequestedWindow(t *testing.T) {
+	ctx := context.Background()
+	db, err := openStore(filepath.Join(t.TempDir(), "monitor.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.db.Close()
+	now := time.Now()
+	if err := db.hello(ctx, &protocol.Hello{HostId: "node", ReportIntervalMs: 30000}, now); err != nil {
+		t.Fatal(err)
+	}
+	snap := &protocol.Snapshot{MetricsJson: []byte(fmt.Sprintf(`{"sample_id":1,"collected_at":%q,"windows":[{"requested_ms":1000,"cpu_percent":{"cpu":{"busy":90}}},{"requested_ms":5000,"cpu_percent":{"cpu":{"busy":12}}}]}`, now.Format(time.RFC3339Nano)))}
+	if err := db.save(ctx, "node", "run", snap, now); err != nil {
+		t.Fatal(err)
+	}
+	points, err := db.history(ctx, "node", now.Add(-time.Second), 5000)
+	if err != nil || len(points) != 1 || points[0].CPU == nil || *points[0].CPU != 12 {
+		t.Fatalf("5s history: %+v, %v", points, err)
+	}
+	points, err = db.history(ctx, "node", now.Add(-time.Second), 30000)
+	if err != nil || len(points) != 1 || points[0].CPU != nil || points[0].WindowMS != 30000 {
+		t.Fatalf("missing 30s history: %+v, %v", points, err)
 	}
 }

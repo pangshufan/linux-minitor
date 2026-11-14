@@ -1,0 +1,17 @@
+{
+  "server": "monitor.example.com:8443",
+  "host-id": "windows-node-01",
+  "tls-enabled": true,
+  "tls-cert": "C:/ProgramData/Monitor/agent.crt",
+  "tls-key": "C:/ProgramData/Monitor/agent.key",
+  "tls-ca": "C:/ProgramData/Monitor/ca.crt",
+  "sample-interval": "1s",
+  "windows": "5s,30s",
+  "inventory-interval": "5m",
+  "filesystem-interval": "15s",
+  "push-interval": "30s",
+  "heartbeat-interval": "5s",
+  "process-enabled": true,
+  "process-limit": 256,
+  "process-services": []
+}

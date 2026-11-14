@@ -1,8 +1,8 @@
-# Linux Monitor
+# Monitor
 
-Linux 宿主机监控。两个 Go 子工程共用根目录的 Go 模块和 `protocol/monitor.proto`，可以独立构建和部署。
+Linux 和 Windows 宿主机监控。两个 Go 子工程共用根目录的 Go 模块和 `protocol/monitor.proto`，可以独立构建和部署。
 
-- `agent/` 在 Linux 4.18 及以上运行。使用 `/proc`、`/sys` 和系统接口采集指标，使用 `util-linux`、LVM2 和 `dmidecode` 补充设备信息。Agent 主动出站连接，不监听入站端口。
+- `agent/` 支持 Linux 4.18 及以上和 Windows x64。Linux 版本使用 `/proc`、`/sys` 和系统接口采集指标，使用 `util-linux`、LVM2 和 `dmidecode` 补充设备信息。Agent 主动出站连接，不监听入站端口。
 - `server/` 提供可选 mTLS 的 gRPC 接入和独立的 Web 管理入口。通过 SQLite WAL 或 PostgreSQL 保存主机配置版本和历史样本。Web 包含服务器列表、配置和存储拓扑、资源曲线、进程监控及按需查询。
 
 ## 构建
@@ -17,6 +17,7 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o bin/monitor-agent-arm64 ./agen
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o bin/monitor-server-arm64 ./server
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/monitor-agent-amd64 ./agent
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/monitor-server-amd64 ./server
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o bin/monitor-agent-windows-amd64.exe ./agent
 ```
 
 生成的 Go 协议绑定已随代码提供。修改协议后，使用 `protoc`、`protoc-gen-go` 和 `protoc-gen-go-grpc` 重新生成。
@@ -182,3 +183,7 @@ RSS 合计可能重复计算共享内存，与 `cgroup_memory_bytes` 的内核�
 服务状态为 running/stopped/degraded/unknown，表示进程存在和采集情况，不代表业务探活健康。`observed_starts/exits/restarts` 仅累计本次 Agent 运行观察到的变动，不是系统历史精确计数；首轮已有进程不计作新启动。重启依据命令根进程整批替换、已观察到停止后重新出现，或 cgroup 身份变更判断；仅父进程退出后子进程重新归属不算重启。Agent 不接管启动、停止或自动重启。
 
 第三方接入协议、服务/进程字段口径和交互示例见 [Agent 数据对接说明](docs/agent-integration.md)。
+
+## 告警
+
+Server 支持站内告警、认领、静默和第三方 Webhook。使用 JSON 的 `alerts` 配置总开关、默认阈值覆盖和推送接收端。详见 [告警配置与 Webhook 对接](docs/alerts.md)。

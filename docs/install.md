@@ -155,6 +155,27 @@ Windows 默认不采集进程明细。在 `process-services` 中填写 SCM 的�
 
 Windows 首版采集整机 CPU、物理内存、启动时间、网卡速率、本地固定卷容量、基础硬件清单、已配置服务状态，以及可访问进程的 CPU、工作集和句柄数。支持进程树和多计算窗口。共享宿主进程的服务只报告 SCM 状态，权限不足或服务处于启停过渡状态时报告不完整或未知。Windows 暂无命令行参数选择器、PSS、磁盘吞吐率、物理磁盘拓扑和 Storage Spaces 拓扑。
 
+### 排查 Windows Agent 的 TLS 握手失败
+
+如果 Agent 报 `tls: failed to verify certificate: x509: certificate signed by unknown authority`，先确认 `tls-ca` 指向签发 ZIP 中的 `ca.crt`，而不是 Web HTTPS 的 CA。用 `certutil -hashfile <ca.crt 的实际路径> SHA256` 比对下载包与 Agent 实际读取的文件。从 `bin` 启动时，证书的相对路径以 `bin` 为基准；也可在配置中直接填写绝对路径。
+
+如果 CA 一致，比较同一台 Windows 上 Go 客户端和 OpenSSL 收到的服务端证书指纹。可用下面的命令读取 OpenSSL 收到的证书，将地址换成配置中的 gRPC 地址。在 Git Bash 执行：
+
+```sh
+openssl s_client -connect monitor.example.com:8443 -alpn h2 -showcerts </dev/null |
+  openssl x509 -noout -issuer -subject -fingerprint -sha256
+```
+
+这条命令只用于查看证书。没有提供 Agent 客户端证书时，Server 返回 `certificate required` 属于预期行为；拿到服务端证书不代表 mTLS 已通过。
+
+在测试中，OpenSSL 收到了 Monitor Server 的证书，但 Go 客户端收到了不同的证书。临时关闭 Go 默认提供的混合后量子密钥交换后，Agent 恢复连接。如果出现同样现象，可以在 Agent 的 `bin` 目录用 CMD 验证：
+
+```cmd
+cmd /d /c "set GODEBUG=tlsmlkem=0&& monitor-agent.exe -config ..\configs\agent-windows.json"
+```
+
+这个[兼容性设置](https://go.dev/src/crypto/tls/common.go)仅对该次启动生效，CA、主机名和客户端证书校验仍然启用。不需要换证书，也不要信任握手中收到的陌生 CA。若使用 Windows 服务，交互式 CMD 的变量不会传给 `MonitorAgent`，需要在服务的运行环境中单独配置。若设置后错误仍存在，继续核对该连接收到的服务端证书，无需把此设置留作默认值。
+
 ## 启动 Windows Server
 
 解压 Windows AMD64 包。在 PowerShell 中进入解压目录，准备 Server JSON，并按上述方式放置证书。JSON 中使用正斜杠路径或对反斜杠进行转义。SQLite 的父目录须先创建。

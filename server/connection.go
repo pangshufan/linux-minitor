@@ -34,6 +34,7 @@ type hub struct {
 	store        *store
 	plaintext    bool
 	authToken    string
+	agentIssuer  *agentIssuer
 	offlineAfter time.Duration
 	mu           sync.RWMutex
 	sessions     map[string]*session

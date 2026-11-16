@@ -36,3 +36,11 @@ button.primary { background:var(--blue); border-color:var(--blue); color:#fff; }
 .service-block { border-top: 1px solid var(--line, #dfe5eb); padding-block: 16px; }
 .service-block summary { cursor: pointer; margin-block-end: 14px; }
 .process-name { display: inline-block; white-space: nowrap; }
+
+.certificate-panel { max-width:780px; }
+.certificate-panel p { margin-block:10px; }
+.certificate-panel fieldset { border:0; padding:0; margin:0; min-inline-size:0; }
+.certificate-panel legend { font-weight:650; margin-bottom:10px; }
+.certificate-fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
+.certificate-fields label { display:grid; gap:4px; }
+.certificate-fields input { min-width:0; border:1px solid #bfcbe0; border-radius:7px; padding:6px 10px; font:inherit; }

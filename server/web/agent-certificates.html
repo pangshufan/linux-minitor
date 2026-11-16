@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent 证书 · 服务器监控</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/agent-certificates.js" defer></script>
+</head>
+<body>
+  <header class="top"><a href="/" class="brand">服务器监控</a><a href="/alerts.html">告警</a><a href="/agent-certificates.html" aria-current="page">Agent 证书</a></header>
+  <main>
+    <div class="heading"><div><h1>签发 Agent 证书</h1><p class="muted">为新的监控主机生成证书和连接配置。</p></div></div>
+    <p id="error" role="alert"></p>
+    <section class="panel certificate-panel">
+      <form id="issue-form">
+        <fieldset id="issue-fields" disabled>
+          <legend>接入配置</legend>
+          <div class="certificate-fields">
+            <label>主机 ID <input id="host-id" required maxlength="128" spellcheck="false" autocomplete="off" pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,127}" placeholder="win-node-01"></label>
+            <label>操作系统 <select id="platform"><option value="windows">Windows</option><option value="linux">Linux</option></select></label>
+            <label>gRPC 地址 <input id="grpc-address" required maxlength="262" spellcheck="false" autocomplete="off" placeholder="10.181.21.20:8443"></label>
+            <label>有效天数 <input id="valid-days" type="number" min="1" max="365" value="90" required></label>
+          </div>
+          <p class="muted">请使用目标主机能访问、且在 Server 证书中登记的 gRPC 地址。每台主机使用不同的主机 ID；为同一主机再次签发时，旧证书仍然有效。</p>
+          <button class="primary" id="issue-download" type="submit">签发并下载</button>
+        </fieldset>
+      </form>
+      <p class="muted" id="token-note" hidden>此 Server 还要求连接 Token。请在目标主机设置 MONITOR_AUTH_TOKEN 或在 Agent 配置中补填 auth-token。</p>
+      <p id="issue-status" role="status" class="muted"></p>
+    </section>
+    <section class="panel certificate-panel">
+      <h2>安装下载包</h2>
+      <p>ZIP 内含 agent.json、agent.crt、agent.key 和 ca.crt。请只交付给目标主机，Server 不保留这次生成的私钥。</p>
+      <p id="install-path" class="muted">Windows：解压到 C:\ProgramData\Monitor，再用 Agent 安装包中的 PowerShell 脚本安装服务。</p>
+    </section>
+  </main>
+</body>
+</html>

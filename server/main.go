@@ -35,7 +35,11 @@ func run() error {
 	flag.Var(&alerts, "alerts", "JSON alert settings with rules and webhook receivers")
 	var tlsEnabled, webTLSEnabled bool
 	var driver, authToken, password string
+	var issuerCert, issuerKey, agentServerCA string
 	flag.BoolVar(&tlsEnabled, "tls-enabled", true, "enable gRPC mutual TLS")
+	flag.StringVar(&issuerCert, "agent-issuer-cert", "", "optional Agent signing CA certificate (and intermediates)")
+	flag.StringVar(&issuerKey, "agent-issuer-key", "", "optional Agent signing CA private key")
+	flag.StringVar(&agentServerCA, "agent-server-ca", "", "CA bundle for Agents to verify the gRPC Server; defaults to tls-ca")
 	flag.BoolVar(&webTLSEnabled, "web-tls-enabled", true, "enable HTTPS outside loopback (certificates enable HTTPS on loopback too)")
 	flag.StringVar(&driver, "db-driver", "sqlite", "database driver: sqlite or postgres")
 	flag.StringVar(&authToken, "auth-token", "", "optional shared Agent authentication token")
@@ -79,6 +83,15 @@ func run() error {
 		webAddr = net.JoinHostPort("127.0.0.1", webPort)
 	}
 	grpcOptions := []grpc.ServerOption{grpc.MaxRecvMsgSize(transport.MaxMessageBytes), grpc.MaxSendMsgSize(transport.MaxMessageBytes)}
+	var issuer *agentIssuer
+	if issuerCert != "" || issuerKey != "" || agentServerCA != "" {
+		if issuerCert == "" || issuerKey == "" || !tlsEnabled || !webTLSEnabled || webCert == "" {
+			return errors.New("Agent certificate issuance requires agent-issuer-cert, agent-issuer-key, gRPC mTLS and native Web HTTPS")
+		}
+		if agentServerCA == "" {
+			agentServerCA = ca
+		}
+	}
 	if tlsEnabled {
 		tlsConfig, err := transport.TLSConfig(cert, key, ca)
 		if err != nil {
@@ -86,6 +99,12 @@ func run() error {
 		}
 		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
 		grpcOptions = append(grpcOptions, grpc.Creds(credentials.NewTLS(tlsConfig)))
+		if issuerCert != "" {
+			issuer, err = loadAgentIssuer(issuerCert, issuerKey, agentServerCA, tlsConfig)
+			if err != nil {
+				return err
+			}
+		}
 	}
 
 	listener, err := net.Listen("tcp", grpcAddr)
@@ -101,7 +120,7 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	h := &hub{store: storage, offlineAfter: offlineAfter, sessions: make(map[string]*session), plaintext: !tlsEnabled, authToken: authToken}
+	h := &hub{store: storage, offlineAfter: offlineAfter, sessions: make(map[string]*session), plaintext: !tlsEnabled, authToken: authToken, agentIssuer: issuer}
 	alertInit, cancelAlertInit := context.WithTimeout(ctx, 15*time.Second)
 	storage.alerts, err = newAlertEngine(alertInit, storage, alertCfg)
 	cancelAlertInit()

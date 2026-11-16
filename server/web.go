@@ -35,6 +35,7 @@ func (h *hub) webRoutes(user, password string) http.Handler {
 	mux.HandleFunc("GET /api/hosts/{id}/history", h.hostHistory)
 	mux.HandleFunc("POST /api/hosts/{id}/query/{kind}", h.liveQuery)
 	h.alertRoutes(mux)
+	h.agentCertificateRoutes(mux)
 	wantUser, wantPass := sha256.Sum256([]byte(user)), sha256.Sum256([]byte(password))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")

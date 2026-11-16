@@ -72,6 +72,44 @@ openssl x509 -in "$host_id.crt" -noout -ext subjectAltName
 | Agent | `linux-node-01.crt` → `tls-cert`，对应私钥 → `tls-key`，签发 Server 的 `ca.crt` → `tls-ca` |
 | Web | `web.crt` → `web-cert`，`web.key` → `web-key`，浏览器信任签发 Web 证书的 CA |
 
+### 通过管理页签发 Agent 证书
+
+网页签发默认关闭。需要在 Monitor Server 启用 gRPC mTLS 和自身的 Web HTTPS，并配置签发 CA。能登录 Web 管理页的账号可以为任意主机 ID 签发证书，应仅把此账号交给有签发权限的管理员。
+
+建议使用**专用于 Agent 签发的 CA**。已有 CA 允许签发中间 CA 时，可以配置专用的中间 CA 及其链。若已有 CA 按上文使用了 `pathlen:0`，也可以生成一张独立的 Agent CA，将其公钥证书追加到 Server 的 Agent 信任列表，同时保留原 CA。这样现有 Server 证书及现有 Agent 均可继续使用，原 CA 私钥也可留在签发机。
+
+以 Linux 为例，以下命令在签发机准备文件。示例中 `ca.crt` 是当前共同使用的 CA 公钥证书；若原来分别使用客户端和服务端 CA，请分别使用现有 `tls-ca` 文件和 Agent 当前的 `tls-ca` 文件。
+
+```sh
+umask 077
+openssl req -x509 -newkey rsa:3072 -nodes -sha256 -days 1825 \
+  -subj '/CN=Monitor Agent Issuing CA' -keyout agent-issuer.key -out agent-issuer.crt \
+  -addext 'basicConstraints=critical,CA:TRUE,pathlen:0' \
+  -addext 'keyUsage=critical,keyCertSign,cRLSign' \
+  -addext 'extendedKeyUsage=clientAuth' \
+  -addext 'subjectKeyIdentifier=hash'
+cat ca.crt agent-issuer.crt > agent-client-ca-bundle.crt
+```
+
+把上述文件放到 Server，私钥只允许 Server 服务账号读取（例如 `root:monitor-server`、`0640`）。保留现有 `tls-cert`、`tls-key`、`web-cert` 和 `web-key`，在 `server.json` 中合入以下配置后重启一次 Server：
+
+```json
+{
+  "tls-enabled": true,
+  "web-tls-enabled": true,
+  "tls-ca": "/etc/monitor/agent-client-ca-bundle.crt",
+  "agent-issuer-cert": "/etc/monitor/agent-issuer.crt",
+  "agent-issuer-key": "/etc/monitor/agent-issuer.key",
+  "agent-server-ca": "/etc/monitor/ca.crt"
+}
+```
+
+此后在 Web 点击 **Agent 证书**，填写唯一主机 ID、目标系统、Agent 能访问的 gRPC 地址（例如 `10.181.21.20:8443`）及有效天数，再点击「签发并下载」。地址须匹配当前 gRPC Server 证书的 SAN。每次签发不需要重启 Server。
+
+ZIP 中有 `agent.json`、`agent.crt`、`agent.key` 和用于验证 gRPC Server 的 `ca.crt`。解压至目标机的 `/etc/monitor`（Linux）或 `C:\ProgramData\Monitor`（Windows）；若目录不同，更新 `agent.json` 中的绝对路径。配置了共享 Token 的环境还需在目标 Agent 补填；ZIP 不包含 Token。为现有 Agent 续期时，将新证书和新私钥一起替换，保留原有采集配置，然后重启 Agent。
+
+请将 ZIP 作为私钥交付，只交给目标主机。Server 不存储生成的 Agent 私钥，不支持找回旧下载或吊销单张证书；再次签发不会让旧证书失效。Server 日志记录签发账号、主机 ID、证书序列号和到期时间。
+
 ## 安装 Linux systemd 服务
 
 从对应解压包目录运行命令。Server 使用专用系统用户。Agent 以 root 运行，便于读取进程指标及硬件清单。
@@ -228,6 +266,8 @@ JSON 键与命令行参数同名。优先级从低到高依次为默认值、配
 | db | monitor.db | SQLite 文件路径或 PostgreSQL DSN |
 | tls-enabled | true | gRPC mTLS 开关 |
 | tls-cert / tls-key / tls-ca | 空 | Server 证书、私钥、Agent CA；mTLS 时必填 |
+| agent-issuer-cert / agent-issuer-key | 空 | 选填，网页签发的 CA 证书链和私钥；启用时需 gRPC mTLS 与 Web HTTPS，且 CA 须受 `tls-ca` 信任 |
+| agent-server-ca | 空，签发启用时回退到 `tls-ca` | 签发 ZIP 中分发的 CA 公钥证书，用于 Agent 验证 gRPC Server；双向使用不同 CA 时须显式配置 |
 | auth-token | 空 | 可选共享 Agent Token，设置后强制校验 |
 | web-tls-enabled | true | false 强制 HTTP；true 在提供证书时使用 HTTPS，非回环监听必须提供证书；回环地址无证书保留 HTTP 行为 |
 | web-cert / web-key | 空 | Web HTTPS 证书和私钥，启用时成对配置 |

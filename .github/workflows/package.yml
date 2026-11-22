@@ -54,7 +54,8 @@ jobs:
               cp configs/agent-windows.json "$package/configs/"
               cp deploy/windows/install-agent.ps1 deploy/windows/install-agent.bat "$package/"
             else
-              cp configs/agent.json configs/agent-services.example.json "$package/configs/"\n              cp deploy/linux/install-agent.sh "$package/"
+              cp configs/agent.json configs/agent-services.example.json "$package/configs/"
+              cp deploy/linux/install-agent.sh "$package/"
             fi
           else
             cp configs/server*.json configs/alerts.example.json "$package/configs/"

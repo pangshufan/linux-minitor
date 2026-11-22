@@ -6,20 +6,36 @@ const endpoint = '/api/agent-certificates';
 async function loadCertificateStatus() {
   try {
     const resp = await fetch(endpoint);
+    if (resp.status === 401) { goToLogin(); return; }
     if (!resp.ok) throw Error('无法读取证书签发状态');
     const data = await resp.json();
     el('issue-fields').disabled = !data.enabled;
     el('token-note').hidden = !data.token_required;
-    if (!data.enabled) el('error').textContent = '签发功能未启用。请通过 HTTPS 访问，并在 Server 配置签发 CA。';
+    const certificates = data.certificates ?? [];
+    el('certificate-info').hidden = certificates.length === 0;
+    el('certificate-list').replaceChildren(...certificates.map(c => {
+      const row = document.createElement('p');
+      const days = Math.ceil((Date.parse(c.not_after) - Date.now()) / 86400000);
+      row.textContent = c.usage + '：' + new Date(c.not_after).toLocaleString()
+        + (days <= 0 ? '（已到期）' : '（剩余 ' + days + ' 天）');
+      return row;
+    }));
+    if (!data.enabled) el('error').textContent = data.disabled_reason || '签发功能未启用，请检查 Server 的 HTTPS 和签发配置。';
   } catch (err) {
     el('error').textContent = err.message;
   }
 }
 
+el('valid-days').addEventListener('input', () => {
+  el('validity-note').textContent = Number(el('valid-days').value) > 365
+    ? '有效期超过一年，请考虑私钥泄露后的影响并妥善保管。允许继续签发，但不能超过签发 CA 的到期时间。'
+    : '';
+});
+
 el('platform').addEventListener('change', () => {
   el('install-path').textContent = el('platform').value === 'windows'
-    ? 'Windows：解压到 C:\\ProgramData\\Monitor，再用 Agent 安装包中的 PowerShell 脚本安装服务。'
-    : 'Linux：将文件放到 /etc/monitor，设置 agent.key 权限为 0600，再安装或重启 Agent 服务。';
+    ? 'Windows：在 Agent 程序包内以管理员身份运行 install-agent.bat，按提示选择下载的 ZIP。'
+    : 'Linux：在 Agent 程序包内执行 sudo bash install-agent.sh，按提示选择下载的 ZIP。';
 });
 
 el('issue-form').addEventListener('submit', async event => {
@@ -39,6 +55,7 @@ el('issue-form').addEventListener('submit', async event => {
     const resp = await fetch(endpoint, {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(request),
     });
+    if (resp.status === 401) { goToLogin(); return; }
     if (!resp.ok) {
       const result = await resp.json().catch(() => ({}));
       throw Error(result.error || '签发失败');

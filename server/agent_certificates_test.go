@@ -72,7 +72,7 @@ func TestAgentCertificateEnrollment(t *testing.T) {
 	}, nil, nil)
 	// A dedicated CA allows enrollment without putting the original CA key online.
 	_, _, issuerPEM, issuerKey := makeCert(&x509.Certificate{
-		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "Agent CA"}, NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(0, 0, 180),
+		SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "Agent CA"}, NotBefore: now.Add(-time.Hour), NotAfter: now.AddDate(0, 0, 730),
 		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign, MaxPathLenZero: true,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}, nil, nil)
@@ -93,8 +93,11 @@ func TestAgentCertificateEnrollment(t *testing.T) {
 	untrustedTLS := serverTLS.Clone()
 	untrustedTLS.ClientCAs = x509.NewCertPool()
 	untrustedTLS.ClientCAs.AddCert(root)
-	if _, err := loadAgentIssuer(issuerPath, issuerKeyPath, serverCAPath, untrustedTLS); err == nil {
-		t.Fatal("untrusted Agent CA accepted")
+	if _, err := loadAgentIssuer(issuerPath, issuerKeyPath, serverCAPath, untrustedTLS); err == nil || !strings.Contains(err.Error(), "not trusted by tls-ca") {
+		t.Fatalf("untrusted Agent CA must fail with actionable trust configuration error: %v", err)
+	}
+	if _, err := loadAgentIssuer(issuerPath, issuerKeyPath, write("wrong-server-ca.pem", issuerPEM), serverTLS); err == nil {
+		t.Fatal("Agent download CA that cannot verify the gRPC Server was accepted")
 	}
 	issuer, err := loadAgentIssuer(issuerPath, issuerKeyPath, serverCAPath, serverTLS)
 	if err != nil {
@@ -118,7 +121,10 @@ func TestAgentCertificateEnrollment(t *testing.T) {
 		{"external browser", "https", "https://other.test", body, true, http.StatusForbidden},
 		{"wrong SAN", "https", "", strings.Replace(body, "10.181.21.20", "10.181.21.21", 1), true, http.StatusBadRequest},
 		{"invalid identity", "https", "", strings.Replace(body, "win-node-01", "../node", 1), true, http.StatusBadRequest},
-		{"expired chain", "https", "", strings.Replace(body, ":90", ":181", 1), true, http.StatusBadRequest},
+		{"long validity allowed", "https", "", strings.Replace(body, ":90", ":400", 1), true, http.StatusOK},
+		{"zero days", "https", "", strings.Replace(body, ":90", ":0", 1), true, http.StatusBadRequest},
+		{"huge days", "https", "", strings.Replace(body, ":90", ":9223372036854775807", 1), true, http.StatusBadRequest},
+		{"expired chain", "https", "", strings.Replace(body, ":90", ":731", 1), true, http.StatusBadRequest},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest("POST", tt.scheme+"://monitor.test/api/agent-certificates", strings.NewReader(tt.body))
@@ -133,6 +139,29 @@ func TestAgentCertificateEnrollment(t *testing.T) {
 			handler.ServeHTTP(rec, req)
 			if rec.Code != tt.status {
 				t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+			}
+			if tt.name == "long validity allowed" {
+				archive, err := zip.NewReader(bytes.NewReader(rec.Body.Bytes()), int64(rec.Body.Len()))
+				if err != nil {
+					t.Fatal(err)
+				}
+				file, err := archive.Open("agent.crt")
+				if err != nil {
+					t.Fatal(err)
+				}
+				data, err := io.ReadAll(file)
+				file.Close()
+				if err != nil {
+					t.Fatal(err)
+				}
+				block, _ := pem.Decode(data)
+				if block == nil {
+					t.Fatal("missing certificate PEM")
+				}
+				leaf, err := x509.ParseCertificate(block.Bytes)
+				if err != nil || time.Until(leaf.NotAfter) < 399*24*time.Hour {
+					t.Fatalf("long validity was truncated: %v %v", leaf, err)
+				}
 			}
 		})
 	}

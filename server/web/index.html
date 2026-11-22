@@ -4,17 +4,22 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>服务器监控</title>
-  <link rel="stylesheet" href="/style.css">
+  <script src="/theme.js"></script><link rel="stylesheet" href="/style.css">
+  <script src="/auth.js" defer></script>
+  <script src="/dashboard.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
-  <header class="top"><a href="#" class="brand"><span aria-hidden="true">▥</span> 服务器监控</a><a href="/alerts.html">告警</a><a href="/agent-certificates.html">Agent 证书</a></header>
+  <header class="top"><a href="/" class="brand"><span class="brand-mark" aria-hidden="true">M</span><span>MONITOR<small>基础设施监控</small></span></a><span class="nav-caption">工作空间</span><nav aria-label="主导航"><a href="/" aria-current="page"><span aria-hidden="true">▦</span>服务器总览</a><a href="/alerts.html"><span aria-hidden="true">◉</span>告警中心</a><a href="/agent-certificates.html"><span aria-hidden="true">◇</span>证书管理</a></nav><label class="theme-control"><span aria-hidden="true">◐</span><span class="sr-only">页面主题</span><select data-theme-select aria-label="页面主题"><option value="light">浅色</option><option value="dark">深色</option><option value="system">跟随系统</option></select></label><div class="sidebar-note"><span class="status-dot"></span> 系统监控工作台<small>Linux &amp; Windows</small></div></header>
   <main>
     <section id="fleet">
-      <div class="heading"><div><h1>服务器列表</h1><p id="fleet-summary" class="muted"></p></div>
-        <label>状态 <select id="filter"><option value="all">全部</option><option value="online">在线</option><option value="offline">失联</option></select></label>
-      </div>
-      <div class="panel scroll"><table><thead><tr><th>服务器</th><th>状态</th><th>CPU</th><th>内存</th><th>根分区</th><th>系统启动</th><th>最后联系</th></tr></thead><tbody id="fleet-rows"></tbody></table></div>
+      <div class="heading page-heading"><div><p class="eyebrow">INFRASTRUCTURE / OVERVIEW</p><h1>服务器总览</h1><p class="muted">主机状态、资源利用与网络配置，一处掌握。</p></div><div class="refresh-stamp"><span class="status-dot"></span> 每 5 秒刷新 <span id="fleet-updated"></span></div></div>
+      <div id="fleet-stats" class="fleet-stats"></div>
+      <section class="panel fleet-panel">
+        <div class="fleet-toolbar"><div><h2>服务器列表</h2><p id="fleet-summary" class="muted" aria-live="polite"></p></div><div class="actions"><label class="search-label"><span class="sr-only">搜索服务器名称、Host ID 或 IP</span><input id="search" type="search" placeholder="搜索名称、Host ID 或 IP…" autocomplete="off"></label><label><span class="sr-only">主机状态</span><select id="filter"><option value="all">全部状态</option><option value="online">在线</option><option value="offline">失联</option></select></label></div></div>
+        <div class="scroll"><table class="fleet-table"><thead><tr><th>服务器</th><th>Host ID</th><th>IP 地址</th><th>状态</th><th>CPU</th><th>内存</th><th>系统卷</th><th>系统启动</th><th>最后联系</th></tr></thead><tbody id="fleet-rows"></tbody></table></div>
+        <div class="table-footer"><span>IP 来自 Agent 上报的网卡配置</span><span>点击服务器名称查看详情 →</span></div>
+      </section>
     </section>
     <section id="detail" hidden>
       <a href="#" class="back">← 服务器列表</a>
@@ -23,10 +28,20 @@
       </div>
       <p id="live-message" class="muted" role="status"></p>
       <div id="cards" class="cards"></div>
+      <section class="dashboard-section">
+        <div class="heading"><div><p class="eyebrow">SYSTEM PERFORMANCE</p><h2>系统资源 Dashboard</h2><p id="dashboard-note" class="muted"></p></div><div class="actions"><label>计算窗口 <select id="window"><option value="">基础窗口</option></select></label><label>范围 <select id="range"><option value="1h">最近 1 小时</option><option value="6h">最近 6 小时</option><option value="24h">最近 24 小时</option></select></label><label>磁盘 <select id="dashboard-disk"></select></label><label>网卡 <select id="dashboard-net"></select></label></div></div>
+        <div id="system-dashboard" class="dashboard-grid"></div>
+        <p class="metric-explanation">磁盘 util% 为采样窗口内设备忙碌时间占比；应结合 IOPS、平均队列和读写延迟判断瓶颈，多队列 SSD / RAID 的 util% 不能单独代表吞吐上限。</p>
+      </section>
+      <section class="dashboard-section">
+        <div class="heading"><div><p class="eyebrow">WORKLOAD PERFORMANCE</p><h2>服务与进程 Dashboard</h2></div><div class="actions"><label>服务 <select id="dashboard-service"></select></label><label>进程 <select id="dashboard-process"><option value="">选择进程查看趋势</option></select></label></div></div>
+        <div id="service-dashboard" class="dashboard-grid"></div>
+        <div id="process-dashboard" class="dashboard-grid"></div>
+      </section>
       <section class="panel"><h2>系统与硬件</h2><dl id="system" class="facts"></dl></section>
       <section class="panel">
         <div class="heading"><div><h2>资源趋势</h2><p id="history-note" class="muted"></p></div>
-          <div class="actions"><label>计算窗口 <select id="window"><option value="">基础窗口</option></select></label><label>指标 <select id="series"></select></label><label>范围 <select id="range"><option value="1h">最近 1 小时</option><option value="6h">最近 6 小时</option><option value="24h">最近 24 小时</option></select></label></div>
+          <div class="actions"><label>指标 <select id="series"></select></label></div>
         </div>
         <div id="chart"></div>
       </section>
@@ -35,7 +50,8 @@
       <section class="panel"><h2>挂载容量</h2><div id="mounts" class="scroll"></div></section>
       <section class="panel"><h2>磁盘、分区与映射</h2><div id="disks" class="scroll"></div></section>
       <section class="panel"><h2>LVM 卷组与逻辑卷</h2><div id="lvm" class="scroll"></div></section>
-      <section class="panel"><h2>DIMM 与网卡配置</h2><div id="hardware" class="scroll"></div></section>
+      <section class="panel"><div class="section-heading"><h2>网络接口</h2><p class="muted">IPv4 / IPv6 地址及子网前缀 · 包含回环和链路本地地址</p></div><div id="interfaces" class="scroll"></div></section>
+      <section class="panel"><h2>内存插槽</h2><div id="hardware" class="scroll"></div></section>
     </section>
     <p id="error" role="alert"></p>
   </main>

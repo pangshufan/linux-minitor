@@ -52,7 +52,7 @@ func run() error {
 	flag.StringVar(&ca, "tls-ca", "", "trusted Agent CA")
 	flag.StringVar(&webCert, "web-cert", "", "Web HTTPS certificate")
 	flag.StringVar(&webKey, "web-key", "", "Web HTTPS private key")
-	flag.StringVar(&webUser, "web-user", "monitor", "Web Basic Auth username")
+	flag.StringVar(&webUser, "web-user", "monitor", "Web login and API Basic Auth username")
 	flag.DurationVar(&offlineAfter, "offline-after", 15*time.Second, "Agent heartbeat timeout")
 	flag.DurationVar(&retention, "retention", 7*24*time.Hour, "history retention")
 	if err := configfile.Parse(flag.CommandLine, os.Args[1:], map[string]string{"web-password": "MONITOR_WEB_PASSWORD", "auth-token": "MONITOR_AUTH_TOKEN", "db": "MONITOR_DB"}); err != nil {
@@ -130,6 +130,10 @@ func run() error {
 	if alertCfg.Enabled {
 		go storage.alerts.run(ctx, h)
 		go storage.alerts.deliver(ctx)
+	}
+	h.certificates, err = loadedServerCertificates(tlsEnabled, cert, key, webTLSEnabled, webCert, webKey, issuer)
+	if err != nil {
+		return err
 	}
 	gs := grpc.NewServer(grpcOptions...)
 	protocol.RegisterMonitorServer(gs, h)

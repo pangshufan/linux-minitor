@@ -107,6 +107,11 @@ func (s *inventorySnapshot) collectHardware() {
 		items := make([]map[string]any, 0, len(interfaces))
 		for _, nic := range interfaces {
 			row := map[string]any{"name": nic.Name, "ifindex": nic.Index, "mac": nic.HardwareAddr.String(), "mtu": nic.MTU}
+			if addresses, err := interfaceAddresses(nic); err == nil {
+				row["addresses"] = addresses
+			} else {
+				s.Issues["network_addresses/"+nic.Name] = err.Error()
+			}
 			path := filepath.Join("/sys/class/net", nic.Name)
 			if state := firstText(path + "/operstate"); state != "" {
 				row["oper_state"] = state

@@ -31,19 +31,11 @@ protoc -I . --go_out=. --go_opt=paths=source_relative \
 
 ## 证书与运行
 
-Server 的 gRPC 证书需要 `serverAuth` 用途，且 SAN 匹配 Agent 连接使用的域名或 IP。每台 Agent 单独签发 `clientAuth` 证书，包含且只包含一个 `urn:monitor:host:<host-id>` 身份 URI。Server 用受信 CA 校验证书，并比对该 URI 与 Agent 声明的主机 ID。以 `uos-01` 为例，证书 SAN 包含 `URI:urn:monitor:host:uos-01`，Agent 参数为 `-host-id uos-01`。以下用同一个 CA 演示，双方也可分别使用各自信任的 CA。
+推荐从 Server 发布包根目录执行 `bash init-server-pki.sh`（源码中执行 `bash deploy/init-server-pki.sh`），按提示输入服务地址。脚本一次生成 Server/Web 证书和专用 Agent 签发 CA，与 `configs/server-sqlite.json`、`configs/server-postgres.json` 配套使用。
 
-Server 默认监听 gRPC `:8443` 和 Web `127.0.0.1:8080`。先在环境中设置 `MONITOR_WEB_PASSWORD`，Web 默认用户名为 `monitor`，可通过 `-web-user` 更改。
+配置 Web 密码和数据库参数后启动 Server。默认通过 `https://127.0.0.1:8080` 登录，进入「Agent 证书」为各主机签发 ZIP，再由 Agent 程序包中的安装向导导入。远程 Web 访问需调整监听地址，并使用证书中的 IP/域名。
 
-```sh
-./monitor-server-arm64 -db monitor.db \
-  -tls-cert server.crt -tls-key server.key -tls-ca ca.crt
-
-./monitor-agent-arm64 -server monitor.example.com:8443 -host-id uos-01 \
-  -tls-cert uos-01.crt -tls-key uos-01.key -tls-ca ca.crt -windows 30s
-```
-
-浏览器打开 `http://127.0.0.1:8080/`，使用 Web 账号登录。默认情况下，若 Web 监听非回环地址，Server 要求配置 `-web-cert` 和 `-web-key` 启用 HTTPS；显式设置 `-web-tls-enabled=false` 可以使用 HTTP。Agent 的主机证书只用于 gRPC 接入。
+Server 的 `tls-ca` 验证 Agent，`agent-server-ca` 则分发给 Agent 来验证 Server，两者用途不同。首次部署使用专用 Agent CA 后，新增 Agent 无需更新 Server 的信任文件。已有部署请按[安装说明](docs/install.md)迁移，保留旧 CA，不能直接重新初始化。
 
 ## 采集、状态与保存
 
@@ -115,7 +107,7 @@ Agent 和 Server 均通过 `-config` 读取 JSON 文件。文件键与命令行�
 | auth-token | 空 | 可选共享 Agent Token，设置后强制校验 |
 | web-tls-enabled | true | false 强制 HTTP；true 在提供证书时使用 HTTPS，非回环监听必须提供证书；回环地址无证书保留 HTTP 行为 |
 | web-cert / web-key | 空 | Web HTTPS 证书和私钥，启用时成对配置 |
-| web-user | monitor | Web/API Basic Auth 用户名 |
+| web-user | monitor | Web/API 登录账号 |
 | web-password | 空，必填 | Web/API 密码，也可通过 MONITOR_WEB_PASSWORD 提供 |
 | offline-after | 15s | 心跳超时，必须大于 1s |
 | retention | 168h | 历史数据保留时间，必须为正，每小时清理 |
@@ -187,3 +179,5 @@ RSS 合计可能重复计算共享内存，与 `cgroup_memory_bytes` 的内核�
 ## 告警
 
 Server 支持站内告警、认领、静默和第三方 Webhook。使用 JSON 的 `alerts` 配置总开关、默认阈值覆盖和推送接收端。详见 [告警配置与 Webhook 对接](docs/alerts.md)。
+
+Agent 可使用发布包中的交互安装向导：Linux 执行 `sudo bash install-agent.sh`，Windows 在管理员 CMD 执行 `install-agent.bat`，按提示导入网页证书 ZIP 并安装服务。见[安装说明](docs/install.md#按提示安装-agent推荐)。

@@ -32,6 +32,10 @@ CREATE TABLE IF NOT EXISTS hosts (
   run_id TEXT NOT NULL DEFAULT '', sample_id INTEGER NOT NULL DEFAULT 0,
   latest_ms INTEGER NOT NULL DEFAULT 0, metrics BLOB, filesystems BLOB
 );
+CREATE TABLE IF NOT EXISTS host_certificates (
+  host_id TEXT PRIMARY KEY REFERENCES hosts(host_id) ON DELETE CASCADE,
+  payload BLOB NOT NULL
+);
 CREATE TABLE IF NOT EXISTS inventories (
   host_id TEXT NOT NULL REFERENCES hosts(host_id), version TEXT NOT NULL, payload BLOB NOT NULL,
   PRIMARY KEY(host_id, version)
@@ -237,6 +241,7 @@ func (s *store) save(ctx context.Context, id, run string, snap *protocol.Snapsho
 }
 
 type hostRecord struct {
+	Certificate      json.RawMessage `json:"certificate,omitempty"`
 	ID               string          `json:"host_id"`
 	LastSeenMS       int64           `json:"last_seen_ms"`
 	ReportIntervalMS int64           `json:"report_interval_ms"`
@@ -254,8 +259,9 @@ type hostRecord struct {
 
 func (s *store) hosts(ctx context.Context, id string) ([]hostRecord, error) {
 	query := `SELECT h.host_id,h.last_seen_ms,h.report_interval_ms,h.inventory_ms,h.inventory_version,
-		h.latest_ms,i.payload,h.metrics,h.filesystems FROM hosts h LEFT JOIN inventories i
-		ON i.host_id=h.host_id AND i.version=h.inventory_version`
+		h.latest_ms,i.payload,h.metrics,h.filesystems,c.payload FROM hosts h LEFT JOIN inventories i
+		ON i.host_id=h.host_id AND i.version=h.inventory_version
+		LEFT JOIN host_certificates c ON c.host_id=h.host_id`
 	var args []any
 	if id != "" {
 		query += " WHERE h.host_id=?"
@@ -269,18 +275,20 @@ func (s *store) hosts(ctx context.Context, id string) ([]hostRecord, error) {
 	records := make([]hostRecord, 0)
 	for rows.Next() {
 		var h hostRecord
-		var inventory, metrics, fs []byte
+		var inventory, metrics, fs, certificate []byte
 		if err := rows.Scan(&h.ID, &h.LastSeenMS, &h.ReportIntervalMS, &h.InventoryMS,
-			&h.InventoryVersion, &h.LatestMS, &inventory, &metrics, &fs); err != nil {
+			&h.InventoryVersion, &h.LatestMS, &inventory, &metrics, &fs, &certificate); err != nil {
 			return nil, err
 		}
-		h.Inventory, h.Metrics, h.Filesystems = inventory, metrics, fs
+		h.Inventory, h.Metrics, h.Filesystems, h.Certificate = inventory, metrics, fs, certificate
 		records = append(records, h)
 	}
 	return records, rows.Err()
 }
 
 type historyPoint struct {
+	Processes        json.RawMessage               `json:"processes,omitempty"`
+	IOWait           *float64                      `json:"iowait_percent"`
 	Services         json.RawMessage               `json:"services,omitempty"`
 	ServiceStatus    map[string]map[string]string  `json:"service_status,omitempty"`
 	CollectedAt      string                        `json:"collected_at"`
@@ -295,7 +303,7 @@ type historyPoint struct {
 	InventoryVersion string                        `json:"inventory_version,omitempty"`
 }
 
-func (s *store) history(ctx context.Context, id string, since time.Time, windowMS float64) ([]historyPoint, error) {
+func (s *store) history(ctx context.Context, id string, since time.Time, windowMS float64, processKeys ...string) ([]historyPoint, error) {
 	rows, err := s.query(ctx, `SELECT collected_at,received_ms,inventory_version,metrics,filesystems FROM samples
 		WHERE host_id=? AND received_ms>=? ORDER BY received_ms DESC, collected_at DESC, run_id DESC, sample_id DESC LIMIT 3000`, id, since.UnixMilli())
 	if err != nil {
@@ -311,7 +319,8 @@ func (s *store) history(ctx context.Context, id string, since time.Time, windowM
 		}
 		var sample struct {
 			Processes struct {
-				Services json.RawMessage `json:"services"`
+				Services json.RawMessage   `json:"services"`
+				Items    []json.RawMessage `json:"items"`
 			} `json:"processes"`
 			Memory  map[string]uint64 `json:"memory_bytes"`
 			Windows []struct {
@@ -335,7 +344,33 @@ func (s *store) history(ctx context.Context, id string, since time.Time, windowM
 			if n, ok := w.CPU["cpu"]["busy"]; ok {
 				p.CPU = &n
 			}
+			if n, ok := w.CPU["cpu"]["iowait"]; ok {
+				p.IOWait = &n
+			}
 			break
+		}
+		if len(processKeys) > 0 && processKeys[0] != "" {
+			selected := make([]json.RawMessage, 0, 1)
+			for _, item := range sample.Processes.Items {
+				var identity struct {
+					Key string `json:"key"`
+				}
+				if json.Unmarshal(item, &identity) == nil && identity.Key == processKeys[0] {
+					selected = append(selected, item)
+					break
+				}
+			}
+			p.Processes, err = json.Marshal(selected)
+			if err != nil {
+				return nil, err
+			}
+		}
+		// Only return per-process rate maps for the selected process.
+		// Service aggregates and device metrics remain available for every dashboard.
+		for key := range p.Rates {
+			if strings.HasPrefix(key, "process/") && (len(processKeys) == 0 || key != processKeys[0]) {
+				delete(p.Rates, key)
+			}
 		}
 		p.Services = sample.Processes.Services
 		p.Memory = utilization(sample.Memory, "used", "total")

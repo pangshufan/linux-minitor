@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -11,6 +9,8 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"net/netip"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -36,26 +36,11 @@ func (h *hub) webRoutes(user, password string) http.Handler {
 	mux.HandleFunc("POST /api/hosts/{id}/query/{kind}", h.liveQuery)
 	h.alertRoutes(mux)
 	h.agentCertificateRoutes(mux)
-	wantUser, wantPass := sha256.Sum256([]byte(user)), sha256.Sum256([]byte(password))
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
-		if r.URL.Path != "/healthz" {
-			u, p, ok := r.BasicAuth()
-			hashedUser, hashedPass := sha256.Sum256([]byte(u)), sha256.Sum256([]byte(p))
-			match := subtle.ConstantTimeCompare(wantUser[:], hashedUser[:]) & subtle.ConstantTimeCompare(wantPass[:], hashedPass[:])
-			if !ok || match != 1 {
-				w.Header().Set("WWW-Authenticate", `Basic realm="Monitor", charset="UTF-8"`)
-				writeError(w, http.StatusUnauthorized, "authentication required")
-				return
-			}
-		}
-		mux.ServeHTTP(w, r)
-	})
+	return h.authenticatedWeb(user, password, mux)
 }
 
 type hostSummary struct {
+	Addresses  []string `json:"ip_addresses"`
 	ID         string   `json:"host_id"`
 	Name       string   `json:"hostname"`
 	OS         string   `json:"os"`
@@ -88,7 +73,12 @@ func summarize(record hostRecord) hostSummary {
 	result := hostSummary{ID: record.ID, Name: record.ID, LastSeenMS: record.LastSeenMS,
 		Online: record.Online, Collection: record.Collecting}
 	var inventory struct {
-		System map[string]string `json:"system"`
+		System   map[string]string `json:"system"`
+		Hardware struct {
+			Interfaces []struct {
+				Addresses []string `json:"addresses"`
+			} `json:"network_interfaces"`
+		} `json:"hardware"`
 	}
 	var metric struct {
 		BootedAt string            `json:"booted_at"`
@@ -108,6 +98,31 @@ func summarize(record hostRecord) hostSummary {
 	_ = json.Unmarshal(record.Filesystems, &filesystems)
 	if name := inventory.System["hostname"]; name != "" {
 		result.Name = name
+	}
+	unique := make(map[netip.Addr]bool)
+	for _, nic := range inventory.Hardware.Interfaces {
+		for _, raw := range nic.Addresses {
+			var address netip.Addr
+			if prefix, err := netip.ParsePrefix(raw); err == nil {
+				address = prefix.Addr()
+			} else if parsed, err := netip.ParseAddr(raw); err == nil {
+				address = parsed
+			}
+			address = address.Unmap()
+			if address.IsValid() && !address.IsLoopback() && !address.IsUnspecified() &&
+				!address.IsMulticast() && !address.IsLinkLocalUnicast() {
+				unique[address] = true
+			}
+		}
+	}
+	ips := make([]netip.Addr, 0, len(unique))
+	for ip := range unique {
+		ips = append(ips, ip)
+	}
+	sort.Slice(ips, func(i, j int) bool { return ips[i].Compare(ips[j]) < 0 })
+	result.Addresses = make([]string, 0, len(ips))
+	for _, ip := range ips {
+		result.Addresses = append(result.Addresses, ip.String())
 	}
 	result.OS = inventory.System["pretty_name"]
 	result.Arch = inventory.System["architecture"]
@@ -174,7 +189,12 @@ func (h *hub) hostHistory(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	points, err := h.store.history(r.Context(), r.PathValue("id"), since, window)
+	processKey := r.URL.Query().Get("process_key")
+	if len(processKey) > 256 {
+		writeError(w, http.StatusBadRequest, "process_key is too long")
+		return
+	}
+	points, err := h.store.history(r.Context(), r.PathValue("id"), since, window, processKey)
 	if err != nil {
 		storageError(w, err)
 		return

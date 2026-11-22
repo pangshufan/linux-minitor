@@ -114,6 +114,24 @@ func calculateWindow(current rawSample, history []rawSample, requested, sample t
 				rates["cpu_percent"] = cpu / 10000000
 			}
 		}
+		if strings.HasPrefix(group, "disk/") {
+			if busy, ok := rates["io_time_ms"]; ok {
+				rates["util_percent"] = min(100, busy/10)
+			}
+			if weighted, ok := rates["weighted_io_time_ms"]; ok {
+				rates["avg_queue_depth"] = weighted / 1000
+			}
+			if n, ok := rates["reads"]; ok && n > 0 {
+				if ms, ok := rates["read_time_ms"]; ok {
+					rates["read_await_ms"] = ms / n
+				}
+			}
+			if n, ok := rates["writes"]; ok && n > 0 {
+				if ms, ok := rates["write_time_ms"]; ok {
+					rates["write_await_ms"] = ms / n
+				}
+			}
+		}
 		if len(rates) > 0 {
 			w.Rates[group] = rates
 		}

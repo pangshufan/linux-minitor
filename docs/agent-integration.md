@@ -269,6 +269,8 @@ inventory_json 顶层字段：host_id、collected_at、system、hardware、block
 | system | hostname、id/version_id/pretty_name、kernel_release、architecture、boot_id、booted_at；值为字符串 |
 | hardware.cpu | 型号、可见逻辑 CPU / 核 / 插槽、在线列表等，按能力提供 |
 | hardware.dmi / memory_devices / network_interfaces | 厂商机型序列号、DIMM、网卡和驱动等 |
+
+`hardware.network_interfaces[].addresses` 为该网卡配置的 IPv4/IPv6 地址数组，保留 CIDR 子网前缀，例如 `["10.181.21.20/24", "2001:db8::20/64"]`。Linux 与 Windows Agent 均提供，包含回环和链路本地地址。空数组表示网卡没有配置地址；字段缺失表示旧版 Agent 或采集失败，应结合 `issues` 判断。地址随 inventory 的采集周期更新，不代表公网出口地址或当前连接的远端地址。Server 列表从该字段去重提取主机 IP，并省略回环、链路本地、组播和未指定地址；网卡详情保留全部地址。
 | block_devices | 以 major:minor 为键，含 path/name/kind/size_bytes、parents、型号序列号、分区表、分区类型和内容签名等 |
 | block_devices[].parents | 指向该块设备的底层设备，不是挂载点路径 |
 | unpartitioned | 磁盘未划分空间，bytes 总量与 regions；regions 的 end_sector_inclusive 为包含末端扇区 |
@@ -409,3 +411,18 @@ Windows 与 Linux 共用快照协议。Windows 主机的 `inventory.system.id` �
 `processes.lifecycle_source=windows_process_snapshot` 表示进程数据来自 Win32 快照。进程身份中的 `start_ticks` 使用 Windows 创建时间 FILETIME，作为不透明身份的一部分。Windows 进程的 `working_set_bytes` 为工作集字节数，采集成功时也写入兼容字段 `rss_bytes`。`handle_count` 为 Windows 句柄数。服务的 `membership_source` 为 `windows_scm` 或 `windows_executable`。共享宿主进程的 SCM 服务保留自身状态，各服务资源用量留空。
 
 SCM 只在明确返回停止时上报 `stopped`，启停过渡、查询权限不足和服务不存在使用 `unknown`。进程 CPU 仍以单核时间占比表示，整机 CPU 以全部可采集处理器组为分母。Windows 不上报 Linux 特有的 PSS、cgroup、LVM 或 PSI 字段。
+
+
+## 磁盘 I/O 瓶颈指标
+
+Linux 的 `windows[].rates["disk/<major>:<minor>/<name>"]` 增加以下派生指标，均以该窗口实际经过时间计算，计数器缺失或复位时不生成：
+
+| 字段 | 含义 |
+| --- | --- |
+| `io_time_ms` | 设备忙碌时间增量，单位 ms/s |
+| `weighted_io_time_ms` | 加权 I/O 时间增量，单位 ms/s |
+| `util_percent` | 忙碌时间占窗口比例，0–100 |
+| `avg_queue_depth` | 加权 I/O 时间增量 / 实际窗口毫秒数 |
+| `read_await_ms` / `write_await_ms` | 读/写完成耗时增量除以相应完成次数，单位 ms；完成次数为零时字段缺失 |
+
+这些指标来自 `/proc/diskstats`；util% 对并行设备不等于性能上限，不能仅凭此值判断饱和。Windows 首版未提供这些字段。

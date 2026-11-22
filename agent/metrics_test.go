@@ -33,3 +33,29 @@ func TestWindowDropsCounterReset(t *testing.T) {
 		t.Fatalf("window should still be warming up: %+v", w)
 	}
 }
+
+func TestDiskBottleneckRates(t *testing.T) {
+	start := time.Unix(100, 0)
+	base := rawSample{at: start, counters: map[string]map[string]uint64{"disk/8:0/sda": {
+		"reads": 0, "writes": 0, "read_time_ms": 0, "write_time_ms": 0, "io_time_ms": 0, "weighted_io_time_ms": 0,
+	}}}
+	current := rawSample{at: start.Add(2 * time.Second), counters: map[string]map[string]uint64{"disk/8:0/sda": {
+		"reads": 100, "writes": 20, "read_time_ms": 250, "write_time_ms": 100, "io_time_ms": 1800, "weighted_io_time_ms": 5000,
+	}}}
+	w := calculateWindow(current, []rawSample{base}, 2*time.Second, time.Second)
+	rates := w.Rates["disk/8:0/sda"]
+	for key, want := range map[string]float64{"util_percent": 90, "avg_queue_depth": 2.5, "read_await_ms": 2.5, "write_await_ms": 5} {
+		if rates[key] != want {
+			t.Fatalf("%s = %v, want %v", key, rates[key], want)
+		}
+	}
+	idle := base
+	idle.at = start.Add(time.Second)
+	w = calculateWindow(idle, []rawSample{base}, time.Second, time.Second)
+	if _, ok := w.Rates["disk/8:0/sda"]["read_await_ms"]; ok {
+		t.Fatal("zero completed reads must not generate a false zero latency")
+	}
+	if w.Rates["disk/8:0/sda"]["util_percent"] != 0 {
+		t.Fatal("idle util should be zero")
+	}
+}

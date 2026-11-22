@@ -27,8 +27,6 @@ import (
 	"monitor/internal/transport"
 )
 
-const maxAgentCertificateDays = 365
-
 type agentIssuer struct {
 	certificate *x509.Certificate
 	signer      crypto.Signer
@@ -65,7 +63,7 @@ func loadAgentIssuer(certPath, keyPath, serverCAPath string, cfg *tls.Config) (*
 	}
 	clientTrust := x509.VerifyOptions{Roots: cfg.ClientCAs, Intermediates: issuers, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}
 	if _, err := pair.Leaf.Verify(clientTrust); err != nil {
-		return nil, fmt.Errorf("Agent signing CA must be trusted by tls-ca for client authentication: %w", err)
+		return nil, fmt.Errorf("Agent signing CA is not trusted by tls-ca: set tls-ca to the Agent issuing CA public certificate, or a bundle preserving existing Agent CAs; restart Server after updating trust: %w", err)
 	}
 
 	raw, err := os.ReadFile(serverCAPath)
@@ -117,9 +115,18 @@ type agentCertificateRequest struct {
 
 func (h *hub) agentCertificateRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/agent-certificates", func(w http.ResponseWriter, r *http.Request) {
+		reason := ""
+		switch {
+		case h.agentIssuer == nil:
+			reason = "Server 未配置签发 CA。首次部署请使用配套 PKI 和示例配置；已有部署按安装说明启用签发并保留原 Agent 信任链，重启 Server 后生效。"
+		case r.TLS == nil:
+			reason = "请通过 Server 的 HTTPS 地址访问证书管理页。"
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"enabled":        h.agentIssuer != nil && r.TLS != nil,
-			"token_required": h.authToken != "",
+			"disabled_reason": reason,
+			"enabled":         h.agentIssuer != nil && r.TLS != nil,
+			"token_required":  h.authToken != "",
+			"certificates":    h.certificates,
 		})
 	})
 	mux.Handle("POST /api/agent-certificates", http.NewCrossOriginProtection().Handler(http.HandlerFunc(h.issueAgentCertificate)))
@@ -149,8 +156,8 @@ func (h *hub) issueAgentCertificate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !transport.ValidHostID(req.HostID) || (req.Platform != "linux" && req.Platform != "windows") ||
-		req.ValidDays < 1 || req.ValidDays > maxAgentCertificateDays {
-		writeError(w, http.StatusBadRequest, "请检查主机 ID、操作系统和有效天数（1–365）")
+		req.ValidDays < 1 {
+		writeError(w, http.StatusBadRequest, "请检查主机 ID、操作系统和有效天数（正整数）")
 		return
 	}
 	now := time.Now().UTC().Truncate(time.Second)
@@ -159,6 +166,12 @@ func (h *hub) issueAgentCertificate(w http.ResponseWriter, r *http.Request) {
 	serverTrust.CurrentTime, serverTrust.DNSName = now, host
 	if _, err := a.serverLeaf.Verify(serverTrust); err != nil {
 		writeError(w, http.StatusBadRequest, "gRPC 地址与当前 Server 证书不匹配，或证书已失效")
+		return
+	}
+	// Bound the input by the issuer lifetime before date arithmetic, avoiding overflow
+	// for extremely large integers without imposing an arbitrary product limit.
+	if float64(req.ValidDays) > float64(a.certificate.NotAfter.Unix()-now.Unix())/86400 {
+		writeError(w, http.StatusBadRequest, "请求的有效期超过签发 CA 的有效期，请缩短天数")
 		return
 	}
 	expiry := now.AddDate(0, 0, req.ValidDays)

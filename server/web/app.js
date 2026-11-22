@@ -56,28 +56,80 @@ function badge(online, state) {
 }
 
 let fleet = [], host = null, detail = null, liveMetrics = null, liveInventory = null, points = [];
-let epoch = 0, historyRange = '', historyWindow = '', historyFetched = 0, nextRefresh;
+let epoch = 0, historyRange = '', historyWindow = '', historyFetched = 0, historyProcess = '', nextRefresh;
 
 async function api(path, options) {
   const response = await fetch(path, options);
   const result = await response.json();
+  if (response.status === 401) { goToLogin(); throw Error('登录已过期'); }
   if (!response.ok) throw Error(result.error || '请求失败');
   return result;
 }
 
+function addressList(addresses, absent = '未上报') {
+  const container = node('div', undefined, 'address-list');
+  if (!addresses?.length) container.append(node('span', absent, 'muted'));
+  else for (const address of addresses) container.append(node('code', address, 'ip-address'));
+  return container;
+}
+
+function resourceMeter(value) {
+  const box = node('div', undefined, 'resource-meter');
+  box.append(node('span', percent(value), 'metric-number'));
+  if (Number.isFinite(value)) {
+    const meter = node('meter');
+    meter.min = 0; meter.max = 100; meter.value = Math.max(0, Math.min(100, value));
+    meter.setAttribute('aria-label', '利用率 ' + percent(value));
+    box.append(meter);
+  }
+  return box;
+}
+
+function timestamp(value) {
+  const box = node('div', undefined, 'timestamp');
+  const d = new Date(value);
+  if (!value || Number.isNaN(d.getTime())) return node('span', dash, 'muted');
+  box.append(node('span', d.toLocaleDateString()), node('small', d.toLocaleTimeString([], {hour12:false})));
+  return box;
+}
+
 function renderFleet() {
   const online = fleet.filter(h => h.online).length;
-  el('fleet-summary').textContent = '共 ' + fleet.length + ' 台服务器 · ' + online + ' 台在线';
+  const stalled = fleet.filter(h => h.online && h.collection_status === 'stalled').length;
+  const stats = [
+    ['纳管服务器', fleet.length, '已接入的主机', 'total'],
+    ['在线主机', online, '心跳连接正常', 'healthy'],
+    ['失联主机', fleet.length - online, '等待恢复连接', 'offline'],
+    ['采集停滞', stalled, '在线但指标未更新', 'stalled'],
+  ];
+  el('fleet-stats').replaceChildren(...stats.map(([label, value, note, tone]) => {
+    const card = node('div', undefined, 'fleet-stat ' + tone);
+    card.append(node('span', label, 'stat-label'), node('strong', String(value)), node('span', note, 'stat-note'));
+    return card;
+  }));
   const filter = el('filter').value;
-  const rows = fleet.filter(h => filter === 'all' || h.online === (filter === 'online')).map(h => {
-    const link = node('a', h.hostname);
+  const search = el('search').value.trim().toLowerCase();
+  const visible = fleet.filter(h => (filter === 'all' || h.online === (filter === 'online')) &&
+    [h.hostname, h.host_id, ...(h.ip_addresses ?? [])].some(value => value?.toLowerCase().includes(search)));
+  el('fleet-summary').textContent = '共 ' + fleet.length + ' 台主机' + (visible.length !== fleet.length ? ' · 当前显示 ' + visible.length + ' 台' : ' · 全部主机');
+  const rows = visible.map(h => {
+    const link = node('a', h.hostname, 'host-link');
     link.href = '#' + encodeURIComponent(h.host_id);
-    const ident = node('div');
-    ident.append(link, node('div', [h.os, h.architecture].filter(Boolean).join(' · '), 'muted'));
-    return row([ident, badge(h.online, h.collection_status), percent(h.cpu_percent), percent(h.memory_percent),
-      percent(h.root_percent), date(h.booted_at), date(h.last_seen_ms)]);
+    const ident = node('div', undefined, 'host-identity');
+    const mark = node('span', h.os?.toLowerCase().includes('windows') ? 'W' : 'L', 'host-icon');
+    const info = node('div');
+    info.append(link, node('div', [h.os, h.architecture].filter(Boolean).join(' · '), 'host-os'));
+    ident.append(mark, info);
+    return row([ident, node('code', h.host_id, 'host-id'), addressList(h.ip_addresses),
+      badge(h.online, h.collection_status), resourceMeter(h.cpu_percent), resourceMeter(h.memory_percent),
+      resourceMeter(h.root_percent), timestamp(h.booted_at), timestamp(h.last_seen_ms)]);
   });
-  if (!rows.length) rows.push(row([fleet.length ? '没有符合条件的服务器' : '等待 Agent 接入']));
+  if (!rows.length) {
+    const empty = row([fleet.length ? '没有匹配的服务器，请调整搜索或筛选条件。' : '等待第一台 Agent 接入，连接后将在这里显示主机。']);
+    empty.firstChild.colSpan = 9;
+    empty.className = 'empty-row';
+    rows.push(empty);
+  }
   el('fleet-rows').replaceChildren(...rows);
 }
 
@@ -130,6 +182,13 @@ function renderDetail() {
     return card;
   }));
   el('system').replaceChildren(...factList([
+    ...(detail.certificate ? [
+      ['Agent 证书到期', date(detail.certificate.not_after) +
+        (Date.parse(detail.certificate.not_after) <= Date.now() ? '（已到期）' :
+          '（剩余 ' + Math.ceil((Date.parse(detail.certificate.not_after) - Date.now()) / 86400000) + ' 天）') +
+        (detail.online ? '' : ' · 上次连接证书')],
+    ] : []),
+    ['Host ID', detail.host_id],
     ['系统启动时间', date(metrics.booted_at ?? system.booted_at)], ['最后联系', date(detail.last_seen_ms)],
     ['本次 Agent 连接', date(detail.connected_ms)], ['最近配置采集', date(liveInventory?.collected_at ?? detail.inventory_ms)],
     ['发行版', system.pretty_name], ['内核', system.kernel_release], ['架构', system.architecture],
@@ -170,11 +229,20 @@ function renderDetail() {
     })
   ];
   table('lvm', ['层级', '名称', '所属 VG', '容量', '剩余', '状态 / 底层'], lvmRows);
-  table('hardware', ['类型', '名称', '配置', '附加信息'], [
-    ...(hardware.memory_devices ?? []).map(d => ['DIMM', d.locator, [d.size, d.type, d.speed].filter(Boolean).join(' · '), d.manufacturer]),
-    ...(hardware.network_interfaces ?? []).map(n => ['网卡', n.name, [n.mac, n.speed_mbps && n.speed_mbps + ' Mbps'].filter(Boolean).join(' · '), [n.driver, n.oper_state].filter(Boolean).join(' · ')])
-  ]);
+  table('hardware', ['插槽', '容量 / 类型 / 频率', '厂商'], (hardware.memory_devices ?? []).map(d =>
+    [d.locator, [d.size, d.type, d.speed].filter(Boolean).join(' · '), d.manufacturer]));
+  table('interfaces', ['接口', '状态', '配置的 IP / 前缀', 'MAC 地址', '链路速率', 'MTU', '驱动 / 描述'],
+    (hardware.network_interfaces ?? []).map(n => {
+      const states = {'1':'up', '2':'down', '3':'testing', '4':'unknown', '5':'dormant', '6':'notpresent', '7':'lowerlayerdown'};
+      const state = states[n.oper_state] ?? n.oper_state ?? 'unknown';
+      const status = node('span', {up:'已连接', down:'未连接', unknown:'未知', dormant:'休眠', lowerlayerdown:'下层未连接'}[state] ?? state,
+        'badge ' + (state === 'up' ? 'online' : state === 'down' ? 'offline' : 'neutral'));
+      return [node('code', n.name), status,
+        addressList(n.addresses, Array.isArray(n.addresses) ? '未配置地址' : '未上报（需升级 Agent）'),
+        node('code', n.mac || dash), n.speed_mbps ? n.speed_mbps + ' Mbps' : dash, n.mtu ?? dash, n.driver ?? n.description ?? dash];
+    }));
   el('live-metrics').disabled = el('live-inventory').disabled = !detail.online;
+  renderDashboards();
 }
 
 const expandedServices = new Map();
@@ -345,18 +413,32 @@ async function refresh(revision) {
       const data = await api('/api/hosts');
       if (revision !== epoch) return;
       fleet = data;
+      el('fleet-updated').textContent = '· ' + new Date().toLocaleTimeString([], {hour12:false});
       renderFleet();
     } else {
       const endpoint = '/api/hosts/' + encodeURIComponent(id);
       const data = await api(endpoint);
       if (revision !== epoch) return;
       detail = data;
+      if (data.online) {
+        try {
+          const latest = await api(endpoint + '/query/latest', {method:'POST',headers:{'Content-Type':'application/json'}});
+          if (revision !== epoch) return;
+          liveMetrics = latest;
+          el('live-message').textContent = '';
+        } catch (error) {
+          if (revision !== epoch) return;
+          el('live-message').textContent = '实时查询暂不可用，展示最近上报数据：' + error.message;
+        }
+      }
       if (liveMetrics && Date.parse(data.metrics?.collected_at) >= Date.parse(liveMetrics.metrics?.collected_at)) liveMetrics = null;
       if (liveInventory && data.inventory_ms >= Date.parse(liveInventory.collected_at)) liveInventory = null;
+      recordDashboardSample(liveMetrics?.metrics ?? data.metrics,liveMetrics?.filesystems ?? data.filesystems,liveMetrics ? Date.now() : (data.latest_received_ms || Date.now()));
       renderDetail();
       const range = el('range').value;
       const windowMS = el('window').value;
-      const sameQuery = range === historyRange && windowMS === historyWindow;
+      const processKey = el('dashboard-process').value;
+      const sameQuery = range === historyRange && windowMS === historyWindow && processKey === historyProcess;
       if (!sameQuery || Date.now() - historyFetched >= 30000) {
         if (!sameQuery) {
           points = [];
@@ -366,6 +448,7 @@ async function refresh(revision) {
         const cursor = sameQuery ? points.at(-1)?.received_ms : undefined;
         const params = new URLSearchParams({range});
         if (windowMS) params.set('window_ms', windowMS);
+        if (processKey) params.set('process_key', processKey);
         if (cursor !== undefined) params.set('since_ms', cursor);
         const history = await api(endpoint + '/history?' + params);
         if (revision !== epoch) return;
@@ -376,7 +459,9 @@ async function refresh(revision) {
         historyFetched = Date.now();
         historyRange = range;
         historyWindow = windowMS;
+        historyProcess = processKey;
         renderChart();
+        renderDashboards();
       }
     }
     el('error').textContent = '';
@@ -417,6 +502,10 @@ function route() {
   el('chart').replaceChildren();
   el('history-note').textContent = '';
   historyRange = '';
+  historyProcess = '';
+  dashboardSamples = [];
+  dashboardSampleKey = '';
+  for (const name of ['dashboard-process','dashboard-service','dashboard-disk','dashboard-net']) { const select=el(name); select.replaceChildren(new Option('','')); delete select.dataset.options; }
   historyWindow = '';
   el('window').value = '';
   historyFetched = 0;
@@ -424,12 +513,15 @@ function route() {
 }
 
 el('filter').addEventListener('change', renderFleet);
+el('search').addEventListener('input', renderFleet);
 el('range').addEventListener('change', () => refresh(++epoch));
 el('window').addEventListener('change', () => {
   renderDetail();
   refresh(++epoch);
 });
 el('series').addEventListener('change', renderChart);
+for (const id of ['dashboard-disk','dashboard-net','dashboard-service']) el(id).addEventListener('change',renderDashboards);
+el('dashboard-process').addEventListener('change',()=>refresh(++epoch));
 el('live-inventory').addEventListener('click', () => live('inventory'));
 el('live-metrics').addEventListener('click', () => live('latest'));
 window.addEventListener('hashchange', route);

@@ -92,6 +92,7 @@ func readMetrics(id uint64) (*metricSnapshot, rawSample) {
 			scale uint64
 		}{
 			{3, "reads", 1}, {5, "read_bytes", 512}, {6, "read_time_ms", 1},
+			{12, "io_time_ms", 1}, {13, "weighted_io_time_ms", 1},
 			{7, "writes", 1}, {9, "write_bytes", 512}, {10, "write_time_ms", 1},
 			{14, "discards", 1}, {16, "discard_bytes", 512}, {18, "flushes", 1},
 		} {

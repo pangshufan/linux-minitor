@@ -4,11 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>告警 · 服务器监控</title>
-  <link rel="stylesheet" href="/style.css">
+  <script src="/theme.js"></script><link rel="stylesheet" href="/style.css">
+  <script src="/auth.js" defer></script>
   <script src="/alerts.js" defer></script>
 </head>
 <body>
-  <header class="top"><a href="/" class="brand">服务器监控</a><a href="/alerts.html" aria-current="page">告警</a><a href="/agent-certificates.html">Agent 证书</a></header>
+  <header class="top"><a href="/" class="brand"><span class="brand-mark" aria-hidden="true">M</span><span>MONITOR<small>基础设施监控</small></span></a><span class="nav-caption">工作空间</span><nav aria-label="主导航"><a href="/"><span aria-hidden="true">▦</span>服务器总览</a><a href="/alerts.html" aria-current="page"><span aria-hidden="true">◉</span>告警中心</a><a href="/agent-certificates.html"><span aria-hidden="true">◇</span>证书管理</a></nav><label class="theme-control"><span aria-hidden="true">◐</span><span class="sr-only">页面主题</span><select data-theme-select aria-label="页面主题"><option value="light">浅色</option><option value="dark">深色</option><option value="system">跟随系统</option></select></label><div class="sidebar-note"><span class="status-dot"></span> 系统监控工作台<small>Linux &amp; Windows</small></div></header>
   <main>
     <div class="heading"><div><h1>告警</h1><p id="alert-status" role="status" class="muted"></p></div><button id="alert-refresh">刷新</button></div>
     <p id="error" role="alert"></p>

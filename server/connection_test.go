@@ -153,6 +153,13 @@ func TestOptionalTLSAndToken(t *testing.T) {
 				t.Fatalf("Web API roundtrip: %s", rec.Body.String())
 			}
 
+			if tt.tls && len(record.Certificate) == 0 {
+				t.Fatal("verified Agent certificate missing from host API")
+			}
+			if !tt.tls && len(record.Certificate) != 0 {
+				t.Fatal("plaintext Agent should not expose a certificate")
+			}
+
 		})
 	}
 }

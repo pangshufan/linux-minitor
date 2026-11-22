@@ -4,14 +4,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Agent 证书 · 服务器监控</title>
-  <link rel="stylesheet" href="/style.css">
+  <script src="/theme.js"></script><link rel="stylesheet" href="/style.css">
+  <script src="/auth.js" defer></script>
   <script src="/agent-certificates.js" defer></script>
 </head>
 <body>
-  <header class="top"><a href="/" class="brand">服务器监控</a><a href="/alerts.html">告警</a><a href="/agent-certificates.html" aria-current="page">Agent 证书</a></header>
+  <header class="top"><a href="/" class="brand"><span class="brand-mark" aria-hidden="true">M</span><span>MONITOR<small>基础设施监控</small></span></a><span class="nav-caption">工作空间</span><nav aria-label="主导航"><a href="/"><span aria-hidden="true">▦</span>服务器总览</a><a href="/alerts.html"><span aria-hidden="true">◉</span>告警中心</a><a href="/agent-certificates.html" aria-current="page"><span aria-hidden="true">◇</span>证书管理</a></nav><label class="theme-control"><span aria-hidden="true">◐</span><span class="sr-only">页面主题</span><select data-theme-select aria-label="页面主题"><option value="light">浅色</option><option value="dark">深色</option><option value="system">跟随系统</option></select></label><div class="sidebar-note"><span class="status-dot"></span> 系统监控工作台<small>Linux &amp; Windows</small></div></header>
   <main>
     <div class="heading"><div><h1>签发 Agent 证书</h1><p class="muted">为新的监控主机生成证书和连接配置。</p></div></div>
     <p id="error" role="alert"></p>
+    <section id="certificate-info" class="panel certificate-panel" hidden><h2>Server 证书</h2><div id="certificate-list"></div></section>
     <section class="panel certificate-panel">
       <form id="issue-form">
         <fieldset id="issue-fields" disabled>
@@ -20,8 +22,9 @@
             <label>主机 ID <input id="host-id" required maxlength="128" spellcheck="false" autocomplete="off" pattern="[A-Za-z0-9][A-Za-z0-9._\-]{0,127}" placeholder="win-node-01"></label>
             <label>操作系统 <select id="platform"><option value="windows">Windows</option><option value="linux">Linux</option></select></label>
             <label>gRPC 地址 <input id="grpc-address" required maxlength="262" spellcheck="false" autocomplete="off" placeholder="10.181.21.20:8443"></label>
-            <label>有效天数 <input id="valid-days" type="number" min="1" max="365" value="90" required></label>
+            <label>有效天数 <input id="valid-days" type="number" min="1" step="1" value="90" required></label>
           </div>
+          <p id="validity-note" class="muted" role="status"></p>
           <p class="muted">请使用目标主机能访问、且在 Server 证书中登记的 gRPC 地址。每台主机使用不同的主机 ID；为同一主机再次签发时，旧证书仍然有效。</p>
           <button class="primary" id="issue-download" type="submit">签发并下载</button>
         </fieldset>
@@ -32,7 +35,7 @@
     <section class="panel certificate-panel">
       <h2>安装下载包</h2>
       <p>ZIP 内含 agent.json、agent.crt、agent.key 和 ca.crt。请只交付给目标主机，Server 不保留这次生成的私钥。</p>
-      <p id="install-path" class="muted">Windows：解压到 C:\ProgramData\Monitor，再用 Agent 安装包中的 PowerShell 脚本安装服务。</p>
+      <p id="install-path" class="muted">Windows：在 Agent 程序包内以管理员身份运行 install-agent.bat，按提示选择下载的 ZIP。</p>
     </section>
   </main>
 </body>

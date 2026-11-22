@@ -35,6 +35,7 @@ async function api(path, body) {
   const response = await fetch(path, body === undefined ? undefined : {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
   });
+  if (response.status === 401) { goToLogin(); throw Error('登录已过期'); }
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || response.statusText);
   return data;

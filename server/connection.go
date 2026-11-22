@@ -35,6 +35,7 @@ type hub struct {
 	plaintext    bool
 	authToken    string
 	agentIssuer  *agentIssuer
+	certificates []certificateInfo
 	offlineAfter time.Duration
 	mu           sync.RWMutex
 	sessions     map[string]*session
@@ -161,6 +162,18 @@ func (h *hub) Connect(stream grpc.BidiStreamingServer[protocol.AgentMessage, pro
 	}()
 	if err := h.store.hello(ctx, hello, now); err != nil {
 		log.Printf("register host %s: %v", id, err)
+		return status.Error(codes.Unavailable, "storage unavailable")
+	}
+
+	var certificate *certificateInfo
+	if p, ok := peer.FromContext(ctx); ok && !h.plaintext {
+		if info, ok := p.AuthInfo.(credentials.TLSInfo); ok && len(info.State.VerifiedChains) > 0 {
+			c := describeCertificate("Agent", info.State.VerifiedChains[0][0])
+			certificate = &c
+		}
+	}
+	if err := h.store.saveHostCertificate(ctx, id, certificate); err != nil {
+		log.Printf("store Agent certificate %s: %v", id, err)
 		return status.Error(codes.Unavailable, "storage unavailable")
 	}
 

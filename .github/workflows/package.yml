@@ -29,6 +29,11 @@ jobs:
       - name: Test
         if: matrix.component == 'server' && matrix.os == 'linux' && matrix.arch == 'amd64'
         run: go test -mod=readonly ./...
+      - name: Test Linux installer
+        if: matrix.component == 'agent' && matrix.os == 'linux' && matrix.arch == 'amd64'
+        run: |
+          bash -n deploy/linux/install-agent.sh
+          python3 -m unittest discover -s deploy/tests -v
       - name: Build and archive
         env:
           COMPONENT: ${{ matrix.component }}
@@ -47,14 +52,14 @@ jobs:
           if [[ "$COMPONENT" == agent ]]; then
             if [[ "$TARGET_OS" == windows ]]; then
               cp configs/agent-windows.json "$package/configs/"
-              cp deploy/windows/install-agent.ps1 "$package/"
+              cp deploy/windows/install-agent.ps1 deploy/windows/install-agent.bat "$package/"
             else
-              cp configs/agent.json configs/agent-services.example.json "$package/configs/"
+              cp configs/agent.json configs/agent-services.example.json "$package/configs/"\n              cp deploy/linux/install-agent.sh "$package/"
             fi
           else
             cp configs/server*.json configs/alerts.example.json "$package/configs/"
             cp docs/alerts.md "$package/docs/"
-            cp deploy/postgres-history-index.sql "$package/"
+            cp deploy/postgres-history-index.sql deploy/init-server-pki.sh "$package/"
           fi
           if [[ "$TARGET_OS" == linux ]]; then
             cp "deploy/systemd/monitor-$COMPONENT.service" "$package/"
@@ -78,3 +83,15 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go test -mod=readonly ./agent
+
+      - name: Validate Windows installer syntax
+        shell: pwsh
+        run: |
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $PWD 'deploy/windows/install-agent.ps1'), [ref]$null, [ref]$parseErrors) | Out-Null
+          if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
+
+      - name: Test Windows service installer
+        shell: powershell
+        run: .\deploy\tests\windows-installer.ps1

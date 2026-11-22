@@ -47,10 +47,17 @@ func (a *agent) collectInventory(ctx context.Context, build string) {
 	if info, err := readWindowsMemory(); err == nil {
 		s.Hardware["os_memory_total_bytes"] = info.TotalPhysical
 	}
+	addresses, addressIssues := networkAddressInventory()
+	for key, value := range addressIssues {
+		s.Issues[key] = value
+	}
 	var interfaces []map[string]any
 	if err := windowsInterfaces(windows.MibIfTableNormal, func(r *windows.MibIfRow2) {
 		entry := map[string]any{"name": windows.UTF16ToString(r.Alias[:]), "key": windowsInterfaceKey(r), "ifindex": r.InterfaceIndex,
 			"oper_state": fmt.Sprint(r.OperStatus), "mtu": r.Mtu, "description": windows.UTF16ToString(r.Description[:])}
+		if ips, ok := addresses[windows.UTF16ToString(r.Alias[:])]; ok {
+			entry["addresses"] = ips
+		}
 		if n := int(r.PhysicalAddressLength); n > 0 && n <= len(r.PhysicalAddress) {
 			entry["mac"] = net.HardwareAddr(r.PhysicalAddress[:n]).String()
 		}

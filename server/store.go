@@ -287,6 +287,9 @@ func (s *store) hosts(ctx context.Context, id string) ([]hostRecord, error) {
 }
 
 type historyPoint struct {
+	CPUSelection     json.RawMessage               `json:"cpu_selection,omitempty"`
+	CPUTime          *float64                      `json:"cpu_time_percent,omitempty"`
+	CPUUtility       *float64                      `json:"cpu_utility_percent,omitempty"`
 	Processes        json.RawMessage               `json:"processes,omitempty"`
 	IOWait           *float64                      `json:"iowait_percent"`
 	Services         json.RawMessage               `json:"services,omitempty"`
@@ -324,6 +327,7 @@ func (s *store) history(ctx context.Context, id string, since time.Time, windowM
 			} `json:"processes"`
 			Memory  map[string]uint64 `json:"memory_bytes"`
 			Windows []struct {
+				CPUSelection  json.RawMessage               `json:"cpu_selection"`
 				ServiceStatus map[string]map[string]string  `json:"service_status"`
 				Requested     float64                       `json:"requested_ms"`
 				Elapsed       float64                       `json:"elapsed_ms"`
@@ -338,6 +342,13 @@ func (s *store) history(ctx context.Context, id string, since time.Time, windowM
 		for _, w := range sample.Windows {
 			if p.WindowMS != 0 && w.Requested != p.WindowMS {
 				continue
+			}
+			p.CPUSelection = w.CPUSelection
+			if n, ok := w.CPU["cpu"]["time_busy"]; ok {
+				p.CPUTime = &n
+			}
+			if n, ok := w.CPU["cpu"]["utility"]; ok {
+				p.CPUUtility = &n
 			}
 			p.ServiceStatus = w.ServiceStatus
 			p.WindowMS, p.ActualWindowMS, p.Rates = w.Requested, w.Elapsed, w.Rates

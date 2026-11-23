@@ -25,7 +25,7 @@ func TestDashboardHistorySelectsOneProcessAndIOWait(t *testing.T) {
 		"sample_id": 1, "collected_at": now.Format(time.RFC3339),
 		"processes": map[string]any{"services": []any{map[string]any{"key": "service/app", "rss_sum_bytes": 100}},
 			"items": []any{map[string]any{"key": "process/11/1", "pid": 11, "rss_bytes": 100}, map[string]any{"key": "process/12/1", "pid": 12}}},
-		"windows": []any{map[string]any{"requested_ms": 1000, "elapsed_ms": 1000, "cpu_percent": map[string]any{"cpu": map[string]any{"busy": 25, "iowait": 4}},
+		"windows": []any{map[string]any{"requested_ms": 1000, "elapsed_ms": 1000, "cpu_selection": map[string]any{"actual": "utility", "source": "pdh_processor_utility"}, "cpu_percent": map[string]any{"cpu": map[string]any{"busy": 25, "iowait": 4, "time_busy": 20, "utility": 25}},
 			"rates": map[string]any{"disk/8:0/sda": map[string]any{"util_percent": 80, "avg_queue_depth": 2},
 				"service/app": map[string]any{"cpu_percent": 50}, "process/11/1": map[string]any{"cpu_percent": 30}, "process/12/1": map[string]any{"cpu_percent": 20}}}},
 	}
@@ -46,6 +46,9 @@ func TestDashboardHistorySelectsOneProcessAndIOWait(t *testing.T) {
 	}
 	if point.IOWait == nil || *point.IOWait != 4 || point.Rates["disk/8:0/sda"]["util_percent"] != 80 {
 		t.Fatalf("missing bottleneck metrics: %+v", point)
+	}
+	if point.CPUTime == nil || *point.CPUTime != 20 || point.CPUUtility == nil || *point.CPUUtility != 25 || !json.Valid(point.CPUSelection) {
+		t.Fatalf("CPU method and comparison metrics lost in history: %+v", point)
 	}
 	if _, ok := point.Rates["process/12/1"]; ok {
 		t.Fatal("unselected process rates must be omitted")

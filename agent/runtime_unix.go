@@ -24,6 +24,9 @@ func checkPlatform(c config) (string, error) {
 	if runtime.GOOS != "linux" {
 		return "", errors.New("monitor agent requires Linux or Windows")
 	}
+	if c.windowsCPUMode != "" && c.windowsCPUMode != "auto" {
+		return "", errors.New("windows-cpu-mode overrides are only supported on Windows")
+	}
 	for _, target := range c.services {
 		if target.Match.WindowsService != "" {
 			return "", fmt.Errorf("service %q uses a Windows selector", target.Name)

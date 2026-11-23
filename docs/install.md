@@ -248,6 +248,28 @@ cmd /d /c "set GODEBUG=tlsmlkem=0&& monitor-agent.exe -config ..\configs\agent-w
 
 这个[兼容性设置](https://go.dev/src/crypto/tls/common.go)仅对该次启动生效，CA、主机名和客户端证书校验仍然启用。不需要换证书，也不要信任握手中收到的陌生 CA。若使用 Windows 服务，交互式 CMD 的变量不会传给 `MonitorAgent`，需要在服务的运行环境中单独配置。若设置后错误仍存在，继续核对该连接收到的服务端证书，无需把此设置留作默认值。
 
+### Windows CPU 统计策略
+
+Windows Agent 新增 `"windows-cpu-mode": "auto"`，默认自动选择。也可手工指定 `"time"`（时间占用率）或 `"utility"`（Windows 性能利用率）。Linux 仅接受默认 auto，不应用 Windows 策略。进程/服务 CPU 仍使用单核 100% 的时间口径，不会按整机策略或频率倍率重新缩放。
+
+Agent 使用系统原生 PDH 的 `\Processor Information(_Total)\% Processor Time` 和 `\Processor Information(_Total)\% Processor Utility`；通过 `PdhAddEnglishCounterW` 添加计数器，适用于不同语言的 Windows。两个指标同时保留，不自行估算 P/E 核心权重。窗口直接使用首尾原始计数器计算，避免把多个瞬时百分比简单平均当作长窗口。
+
+自动规则如下（支持范围内的 Windows x64）：
+
+| Windows 版本 / 补丁 | 首选主指标 |
+| --- | --- |
+| Server 2019、Server 2022、Windows 10，以及较旧 Windows 11 | utility |
+| Server 2025，build 26100 且 UBR >= 4652 | time |
+| Windows 11 24H2，build 26100 且 UBR >= 3624 | time |
+| build >= 26200 | time |
+| build 26100 但读不到 UBR | time，标注补丁号未知 |
+
+上述是根据微软变更记录制定的兼容规则。部分变更分阶段推出，同样的版本/补丁也可能存在差异，不能保证与任务管理器每一帧完全一致；任务管理器与 Agent 还需要对齐采样窗口、刷新时间和所比较的页面。[Windows 11 KB5053656](https://support.microsoft.com/en-us/servicing/os/windows-11/2025/03/march-27-2025-kb5053656-os-build-26100-3624-preview)、[Server 2025 KB5062553](https://support.microsoft.com/en-us/servicing/os/windows-server/2025/07/july-8-2025-kb5062553-os-build-26100-4652)说明了切换到标准指标的变化。现场比对不一致时，可手工指定 time 或 utility，并在主机详情核对实际来源及回退原因。
+
+首选 utility 不可用时，回退到 PDH time；PDH time 也不可用时尝试原有 `GetSystemTimes`。time 模式不会在失败时自动切成 utility。回退始终在 `cpu_selection` 中说明，无可用数据时不补零。若启动时计数器注册失败，修复 Windows 性能计数器后需重启 Agent；已有计数器的临时采集失败会在后续有效窗口重新尝试。性能利用率的原始值可能超过 100%，保留原值供对照；主指标 `busy` 限制在 0–100%，以兼容服务器列表、CPU 卡片和现有告警阈值。
+
+升级 Agent 后，Server 列表与详情显示当前统计口径；Dashboard 同时提供主指标、时间占用和性能利用曲线。历史保存各采样点的实际口径，切换策略或升级前后的主指标之间断线显示。查看新增信息需要同步升级 Server。
+
 ## 启动 Windows Server
 
 解压 Windows AMD64 包。在 PowerShell 中进入解压目录，准备 Server JSON，并按上述方式放置证书。JSON 中使用正斜杠路径或对反斜杠进行转义。SQLite 的父目录须先创建。
@@ -274,6 +296,7 @@ JSON 键与命令行参数同名。优先级从低到高依次为默认值、配
 | tls-enabled | true | 启用 mTLS；false 使用明文 gRPC |
 | tls-cert / tls-key / tls-ca | 空 | 客户端证书、私钥、Server CA；mTLS 时必填 |
 | auth-token | 空 | 可选共享 Token |
+| windows-cpu-mode | auto | Windows 整机 CPU 策略：auto / time / utility；Linux 仅接受 auto。详见 Windows CPU 统计策略 |
 | sample-interval | 1s | 采样及最短计算窗口，必须为正 |
 | windows | 空 | 附加窗口，以逗号分隔，如 `5s,30s`；各窗口为采样周期整数倍，最多 3600 个采样点，含基础窗口最多 8 个 |
 | inventory-interval | 5m | 硬件与存储清单刷新周期，必须为正 |

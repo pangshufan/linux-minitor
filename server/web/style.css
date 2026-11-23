@@ -382,3 +382,4 @@ meter::-moz-meter-bar { background:var(--tone-789be6); border-radius:3px; }
 :root { --primary-button:#3168e0; }
 :root[data-theme="dark"] { --primary-button:#3b67d1; }
 button.primary { background:var(--primary-button); border-color:var(--primary-button); }
+.cpu-method-label { display:block; font-size:9px; color:var(--muted); white-space:nowrap; }

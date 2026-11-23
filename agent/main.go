@@ -19,6 +19,7 @@ import (
 )
 
 type config struct {
+	windowsCPUMode                       string
 	services                             []serviceConfig
 	processDiscovery, processPSSInterval time.Duration
 	processPSS                           bool
@@ -40,6 +41,7 @@ func parseConfig() (config, error) {
 	var c config
 	var windows string
 	var services configfile.JSONValue
+	flag.StringVar(&c.windowsCPUMode, "windows-cpu-mode", "auto", "Windows CPU strategy: auto, time or utility")
 	flag.Var(&services, "process-services", "JSON array of named services and selectors")
 	flag.DurationVar(&c.processDiscovery, "process-discovery-interval", 5*time.Second, "command selector discovery interval")
 	flag.BoolVar(&c.processPSS, "process-pss-enabled", false, "collect proportional memory at a lower frequency")
@@ -65,6 +67,9 @@ func parseConfig() (config, error) {
 		return c, err
 	}
 
+	if !validWindowsCPUMode(c.windowsCPUMode) {
+		return c, errors.New("windows-cpu-mode must be auto, time or utility")
+	}
 	var err error
 	c.services, err = parseServiceConfig(services.String())
 	if err != nil {

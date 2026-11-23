@@ -24,6 +24,7 @@ function recordDashboardSample(metrics, filesystems, at) {
   const rates = Object.fromEntries(Object.entries(w?.rates ?? {}).filter(([name]) => !name.startsWith('process/') || name === selectedProcess));
   dashboardSamples.push({
     received_ms: at, collected_at:metrics.collected_at, window_ms:w?.requested_ms,
+    cpu_selection:w?.cpu_selection, cpu_time_percent:w?.cpu_percent?.cpu?.time_busy, cpu_utility_percent:w?.cpu_percent?.cpu?.utility,
     cpu_percent:w?.cpu_percent?.cpu?.busy, iowait_percent:w?.cpu_percent?.cpu?.iowait,
     memory_percent:ratio(memory.used,memory.total), swap_percent:ratio(memory.swap_used,memory.swap_total),
     rates, services:metrics.processes?.services ?? [],
@@ -151,11 +152,24 @@ function drawDashboardChart(title, series, samples, format, note) {
   return card;
 }
 
+function cpuMethodDescription(selection) {
+  if (!selection) return '';
+  const label = {time:'时间占用率',utility:'性能利用率'}[selection.actual] || '暂不可用';
+  return label + ' · ' + (selection.source || '采集不可用') + ' · Windows ' + selection.windows_build +
+    (selection.requested === 'auto' ? ' · 自动选择' : ' · 手动指定') +
+    (selection.fallback ? ' · 已回退，首选计数器不可用' : '');
+}
+
 function renderDashboards() {
   if (!detail) return;
   const metrics = liveMetrics?.metrics ?? detail.metrics ?? {};
   syncDashboardOptions(metrics);
   const samples=dashboardData(metrics);
+  const selection=dashboardWindow(metrics)?.cpu_selection;
+  const isWindows=(liveInventory ?? detail.inventory)?.system?.id === 'windows' || !!selection;
+  const selectedCPU=p => selection && p.cpu_selection?.actual !== selection.actual ? null : p.cpu_percent;
+  const cpuSeries=isWindows ? [['主指标',selectedCPU],['时间占用',p=>p.cpu_time_percent],['性能利用',p=>p.cpu_utility_percent]] :
+    [['CPU',p=>p.cpu_percent],['iowait',p=>p.iowait_percent]];
   const disk=document.getElementById('dashboard-disk').value;
   const net=document.getElementById('dashboard-net').value;
   const rate=(key,field) => p => p.rates?.[key]?.[field];
@@ -165,9 +179,9 @@ function renderDashboards() {
   document.getElementById('dashboard-note').textContent =
     '在线时每 5 秒查询最新快照 · 采样窗口 ' + (dashboardWindow(metrics)?.requested_ms/1000 || '—') +
     ' 秒 · 历史上报周期 ' + (detail.report_interval_ms/1000 || '—') + ' 秒 · 指标采集于 ' + date(metrics.collected_at) +
-    (detail.online ? '' : ' · 主机离线，展示历史及最后数据');
+    (detail.online ? '' : ' · 主机离线，展示历史及最后数据') + (selection ? ' · ' + cpuMethodDescription(selection) : '');
   document.getElementById('system-dashboard').replaceChildren(
-    plot('CPU 与 I/O 等待',[['CPU',p=>p.cpu_percent],['iowait',p=>p.iowait_percent]],percent),
+    plot(isWindows ? 'CPU · Windows 统计口径' : 'CPU 与 I/O 等待',cpuSeries,percent,isWindows ? '主指标按版本及配置选择，展示范围 0–100%；原始性能利用率可超过 100%。Windows 未提供 Linux iowait。' : undefined),
     plot('内存与 Swap',[['内存',p=>p.memory_percent],['Swap',p=>p.swap_percent]],percent),
     plot('磁盘吞吐 · '+device,named(disk,[['读取','read_bytes'],['写入','write_bytes']]),byteRate),
     plot('磁盘忙碌时间 · '+device,named(disk,[['util','util_percent']]),percent),

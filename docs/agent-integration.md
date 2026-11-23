@@ -426,3 +426,14 @@ Linux 的 `windows[].rates["disk/<major>:<minor>/<name>"]` 增加以下派生指
 | `read_await_ms` / `write_await_ms` | 读/写完成耗时增量除以相应完成次数，单位 ms；完成次数为零时字段缺失 |
 
 这些指标来自 `/proc/diskstats`；util% 对并行设备不等于性能上限，不能仅凭此值判断饱和。Windows 首版未提供这些字段。
+
+
+## Windows 整机 CPU 口径与来源
+
+新增可选 `windows[].cpu_selection`，字段包含 `requested`（auto/time/utility）、`preferred`、`actual`、`source`、`reason`、`windows_build`，以及回退时的 `fallback`、计数器故障时的 `counter_issues`。
+
+`windows[].cpu_percent.cpu` 保留 `busy` 作为 0–100 的主指标，并增加 `time_busy`（PDH 时间占用）、`utility`（PDH 性能利用率，原始值可超过 100）、`kernel_busy`（GetSystemTimes 时间占用对照值）。分项 user/system/idle 仍是时间口径，不应拿它们与 utility 主指标相加验证。Windows 不上报 Linux 专属 iowait。计数器不可用时对应比较值缺失，无数据不补零。
+
+`busy` 的定义应结合每个窗口的 `cpu_selection.actual` 理解，不能在切换口径前后直接做连续趋势或跨口径聚合。旧版 Windows Agent 没有 cpu_selection，使用 GetSystemTimes 的时间口径。进程和服务的 cpu_percent 仍按单核 100% 计算，与整机指标分开解释。
+
+Server 历史 API 增加 `cpu_selection`、`cpu_time_percent`、`cpu_utility_percent`，列表摘要增加 `cpu_selection`。自动策略和手动覆盖方式见安装说明。

@@ -73,9 +73,10 @@ function addressList(addresses, absent = '未上报') {
   return container;
 }
 
-function resourceMeter(value) {
+function resourceMeter(value, method) {
   const box = node('div', undefined, 'resource-meter');
   box.append(node('span', percent(value), 'metric-number'));
+  if (method) box.append(node('small', method, 'cpu-method-label'));
   if (Number.isFinite(value)) {
     const meter = node('meter');
     meter.min = 0; meter.max = 100; meter.value = Math.max(0, Math.min(100, value));
@@ -121,7 +122,7 @@ function renderFleet() {
     info.append(link, node('div', [h.os, h.architecture].filter(Boolean).join(' · '), 'host-os'));
     ident.append(mark, info);
     return row([ident, node('code', h.host_id, 'host-id'), addressList(h.ip_addresses),
-      badge(h.online, h.collection_status), resourceMeter(h.cpu_percent), resourceMeter(h.memory_percent),
+      badge(h.online, h.collection_status), resourceMeter(h.cpu_percent, h.cpu_selection?.actual === "utility" ? "性能利用率" : h.cpu_selection?.actual === "time" ? "时间占用率" : null), resourceMeter(h.memory_percent),
       resourceMeter(h.root_percent), timestamp(h.booted_at), timestamp(h.last_seen_ms)]);
   });
   if (!rows.length) {
@@ -171,7 +172,7 @@ function renderDetail() {
   el('host-subtitle').replaceChildren(badge(detail.online, detail.collection_status),
     document.createTextNode('  ' + detail.host_id + ' · ' + (statusText[detail.collection_status] ?? '') + ' · 指标采集于 ' + date(metrics.collected_at)));
   const cards = [
-    ['CPU', percent(cpu)], ['内存', percent(ratio(memory.used, memory.total))],
+    [primary?.cpu_selection?.actual === 'utility' ? 'CPU · 性能利用率' : primary?.cpu_selection?.actual === 'time' ? 'CPU · 时间占用率' : 'CPU', percent(cpu)], ['内存', percent(ratio(memory.used, memory.total))],
     ['Swap', percent(ratio(memory.swap_used, memory.swap_total))],
     [windowsHost ? '系统卷已用' : '根分区已用', percent(ratio(root?.used_bytes, root?.total_bytes))],
     ['运行时长', Number.isFinite(metrics.uptime_seconds) ? (metrics.uptime_seconds / 86400).toFixed(1) + ' 天' : dash]
@@ -189,6 +190,7 @@ function renderDetail() {
         (detail.online ? '' : ' · 上次连接证书')],
     ] : []),
     ['Host ID', detail.host_id],
+    ...(primary?.cpu_selection ? [['CPU 统计口径', cpuMethodDescription(primary.cpu_selection)]] : []),
     ['系统启动时间', date(metrics.booted_at ?? system.booted_at)], ['最后联系', date(detail.last_seen_ms)],
     ['本次 Agent 连接', date(detail.connected_ms)], ['最近配置采集', date(liveInventory?.collected_at ?? detail.inventory_ms)],
     ['发行版', system.pretty_name], ['内核', system.kernel_release], ['架构', system.architecture],
@@ -392,9 +394,12 @@ function renderChart() {
     const t = start + (end - start) * i / 4;
     svg.append(svgNode('text', {x:x(t), y:215, 'text-anchor':'middle'}, new Date(t).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})));
   }
-  let path = '', last = 0;
+  let path = '', last = 0, lastMethod = null;
   const gap = 1.8 * (detail?.report_interval_ms || 30000);
-  for (const [ms, value] of result) {
+  for (const [index, [ms, value]] of result.entries()) {
+    const method = points[index]?.cpu_selection?.actual ?? 'legacy';
+    if (select.value === 'cpu' && lastMethod !== null && method !== lastMethod) last = 0;
+    lastMethod = method;
     if (!Number.isFinite(value) || ms < start || ms > end) { last = 0; continue; }
     const command = last && ms - last <= gap ? 'L' : 'M';
     path += command + x(ms).toFixed(2) + ' ' + y(value).toFixed(2) + ' ';

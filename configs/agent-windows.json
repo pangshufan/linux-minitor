@@ -5,6 +5,7 @@
   "tls-cert": "C:/ProgramData/Monitor/agent.crt",
   "tls-key": "C:/ProgramData/Monitor/agent.key",
   "tls-ca": "C:/ProgramData/Monitor/ca.crt",
+  "windows-cpu-mode": "auto",
   "sample-interval": "1s",
   "windows": "5s,30s",
   "inventory-interval": "5m",

@@ -40,18 +40,19 @@ func (h *hub) webRoutes(user, password string) http.Handler {
 }
 
 type hostSummary struct {
-	Addresses  []string `json:"ip_addresses"`
-	ID         string   `json:"host_id"`
-	Name       string   `json:"hostname"`
-	OS         string   `json:"os"`
-	Arch       string   `json:"architecture"`
-	BootedAt   string   `json:"booted_at"`
-	LastSeenMS int64    `json:"last_seen_ms"`
-	Online     bool     `json:"online"`
-	Collection string   `json:"collection_status"`
-	CPU        *float64 `json:"cpu_percent"`
-	Memory     *float64 `json:"memory_percent"`
-	Root       *float64 `json:"root_percent"`
+	CPUSelection json.RawMessage `json:"cpu_selection,omitempty"`
+	Addresses    []string        `json:"ip_addresses"`
+	ID           string          `json:"host_id"`
+	Name         string          `json:"hostname"`
+	OS           string          `json:"os"`
+	Arch         string          `json:"architecture"`
+	BootedAt     string          `json:"booted_at"`
+	LastSeenMS   int64           `json:"last_seen_ms"`
+	Online       bool            `json:"online"`
+	Collection   string          `json:"collection_status"`
+	CPU          *float64        `json:"cpu_percent"`
+	Memory       *float64        `json:"memory_percent"`
+	Root         *float64        `json:"root_percent"`
 }
 
 func (h *hub) listHosts(w http.ResponseWriter, r *http.Request) {
@@ -84,7 +85,8 @@ func summarize(record hostRecord) hostSummary {
 		BootedAt string            `json:"booted_at"`
 		Memory   map[string]uint64 `json:"memory_bytes"`
 		Windows  []struct {
-			CPU map[string]map[string]float64 `json:"cpu_percent"`
+			CPUSelection json.RawMessage               `json:"cpu_selection"`
+			CPU          map[string]map[string]float64 `json:"cpu_percent"`
 		} `json:"windows"`
 	}
 	var filesystems struct {
@@ -131,6 +133,7 @@ func summarize(record hostRecord) hostSummary {
 		result.BootedAt = inventory.System["booted_at"]
 	}
 	if len(metric.Windows) > 0 {
+		result.CPUSelection = metric.Windows[0].CPUSelection
 		if busy, ok := metric.Windows[0].CPU["cpu"]["busy"]; ok {
 			result.CPU = &busy
 		}

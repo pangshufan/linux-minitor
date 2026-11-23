@@ -22,6 +22,7 @@ type metricSnapshot struct {
 }
 
 type metricWindow struct {
+	CPUSelection  *cpuSelection                 `json:"cpu_selection,omitempty"`
 	ServiceStatus map[string]map[string]string  `json:"service_status,omitempty"`
 	RequestedMS   float64                       `json:"requested_ms"`
 	Start         *time.Time                    `json:"window_start,omitempty"`
@@ -33,14 +34,17 @@ type metricWindow struct {
 }
 
 type rawSample struct {
-	services map[string]rawService
-	at       time.Time
-	cpu      map[string][]uint64
-	counters map[string]map[string]uint64
+	cpuNative any
+	services  map[string]rawService
+	at        time.Time
+	cpu       map[string][]uint64
+	counters  map[string]map[string]uint64
 }
 
 func (a *agent) collectMetrics(ctx context.Context, c config) {
 	var id uint64
+	cpuSampler := newPlatformCPUSampler(c)
+	defer cpuSampler.close()
 	processes := newProcessCollector()
 	defer processes.close()
 	longest := c.sample
@@ -51,6 +55,7 @@ func (a *agent) collectMetrics(ctx context.Context, c config) {
 	periodically(ctx, c.sample, true, func() {
 		id++
 		s, raw := readMetrics(id)
+		cpuSampler.collect(&raw)
 		processes.collect(c, s, &raw)
 		if len(history) > 0 {
 			s.SampleIntervalMS = millis(raw.at.Sub(history[len(history)-1].at))
@@ -149,6 +154,7 @@ func calculateWindow(current rawSample, history []rawSample, requested, sample t
 			w.CPU[name] = usage
 		}
 	}
+	calculatePlatformCPU(&w, current, history, base)
 	calculateServiceRates(&w, current, history, base)
 	return w
 }
